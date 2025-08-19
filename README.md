@@ -22,6 +22,7 @@
 
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/dj56959566/vps1/main/hy2.sh)
+
 ```
 
 系统要求
