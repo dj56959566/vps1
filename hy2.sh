@@ -16,6 +16,10 @@ echo -e " |_____/   |_| |_|\_\  \__, |  \___|"
 echo -e "                        __/ |       "
 echo -e "                       |___/        "
 
+# 定义亮色标注（使用高亮绿色）
+highlight='\e[1;92m'  # 粗体亮绿色
+reset='\e[0m\e[92m'   # 重置后恢复普通绿色
+
 # 所有颜色变量都设为空，因为我们已经在开头设置了全局绿色
 green=''
 none=''
@@ -352,36 +356,30 @@ EOF
 
     echo
     echo
-    echo "---------- Hy2 客户端配置信息 ----------"
-    echo -e "地址 (Address) = ${ip}"
-    echo -e "端口 (Port) = ${port}"
-    echo -e "密码 (Password) = ${pwd}"
-    echo -e "传输层安全 (TLS) = tls"
-    echo -e "应用层协议协商 (Alpn) = h3"
-    echo -e "跳过证书验证 (allowInsecure) = true"
+    echo -e "${highlight}========== Hy2 客户端配置信息 ==========${reset}"
+    echo -e "${highlight}地址 (Address) = ${ip}${reset}"
+    echo -e "${highlight}端口 (Port) = ${port}${reset}"
+    echo -e "${highlight}密码 (Password) = ${pwd}${reset}"
+    echo -e "${highlight}传输层安全 (TLS) = tls${reset}"
+    echo -e "${highlight}应用层协议协商 (Alpn) = h3${reset}"
+    echo -e "${highlight}跳过证书验证 (allowInsecure) = true${reset}"
     echo
 
     # 如果是 IPv6 那么在生成节点分享链接时, 要用[]把IP包起来
     if [[ $netstack == "6" ]]; then
         ip="[${ip}]"
     fi
-    echo "---------- 链接 URL ----------"
+    echo -e "${highlight}========== 链接 URL ==========${reset}"
     hy2_url="hysteria2://${pwd}@${ip}:${port}?alpn=h3&insecure=1#HY2_${ip}"
-    echo -e "${hy2_url}"
+    echo -e "${highlight}${hy2_url}${reset}"
     echo
-    sleep 3
-    echo "以下两个二维码完全一样的内容"
-    qrencode -t UTF8 $hy2_url
-    qrencode -t ANSI $hy2_url
+    
     echo
-    echo "---------- END -------------"
-    echo "以上节点信息保存在 ~/_hy2_url_ 中"
+    echo -e "${highlight}========== END ==========${reset}"
+    echo -e "${highlight}以上节点信息保存在 ~/_hy2_url_ 中${reset}"
 
     # 节点信息保存到文件中
     echo $hy2_url > ~/_hy2_url_
-    echo "以下两个二维码完全一样的内容" >> ~/_hy2_url_
-    qrencode -t UTF8 $hy2_url >> ~/_hy2_url_
-    qrencode -t ANSI $hy2_url >> ~/_hy2_url_
 }
 
 # 主菜单
