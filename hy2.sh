@@ -81,7 +81,7 @@ install_hy2() {
     echo
     echo -e "此脚本仅兼容于Debian 10+系统. 如果你的系统不符合,请Ctrl+C退出脚本"
     echo -e "可以去查看脚本整体思路和关键命令, 以便针对你自己的系统做出调整."
-    echo -e "有问题电报反映 🤖   t.me/djkyc2_bot"
+    echo -e "有问题电报反映:https://t.me/djkyc2_bot"
     echo -e "本脚本支持带参数执行, 省略交互过程, 详见hy2官方GitHub."
     echo "----------------------------------------------------------------"
 
@@ -183,7 +183,7 @@ install_hy2() {
     if [[ -z $netstack ]]; then
       echo
       echo -e "如果你的小鸡是双栈(同时有IPv4和IPv6的IP)，请选择你把Hy2搭在哪个'网口'上"
-      echo "如果你不懂这段话是什么意思, 请直接回车"
+      echo "想ipv4就输入ipv4即可反之ipv6,如果你不懂,默认请直接回车"
       read -p "$(echo -e "Input 4 for IPv4, 6 for IPv6: ")" netstack
 
       if [[ $netstack == "4" ]]; then
@@ -224,18 +224,72 @@ install_hy2() {
       done
     fi
 
-    # 域名
-    if [[ -z $domain ]]; then
-        echo
-        echo -e "请输入自签证书使用的域名 Input certificate domain"
-        read -p "(默认: learn.microsoft.com): " domain
-        [ -z "$domain" ] && domain="learn.microsoft.com"
-        echo
-        echo
-        echo -e "证书域名 Certificate Domain = ${domain}"
-        echo "----------------------------------------------------------------"
-        echo
-    fi
+# 域名选择
+if [[ -z $domain ]]; then
+    echo
+    echo -e "请选择自签证书使用的域名（这些域名对三网都比较友好）："
+    echo -e "  1. learn.microsoft.com (默认)"
+    echo -e "  2. www.apple.com"
+    echo -e "  3. www.bing.com"
+    echo -e "  4. www.office.com"
+    echo -e "  5. www.azure.com"
+    echo -e "  6. www.amazon.com"
+    echo -e "  7. www.linkedin.com"
+    echo -e "  8. www.adobe.com"
+    echo -e "  9. www.github.com"
+    echo -e "  10. www.cloudflare.com"
+    echo -e "  0. 自定义域名"
+    
+    read -p "请选择 [1-10，默认1]: " domain_choice
+    
+    case "$domain_choice" in
+        1|"")
+            domain="learn.microsoft.com"
+            ;;
+        2)
+            domain="www.apple.com"
+            ;;
+        3)
+            domain="www.bing.com"
+            ;;
+        4)
+            domain="www.office.com"
+            ;;
+        5)
+            domain="www.azure.com"
+            ;;
+        6)
+            domain="www.amazon.com"
+            ;;
+        7)
+            domain="www.linkedin.com"
+            ;;
+        8)
+            domain="www.adobe.com"
+            ;;
+        9)
+            domain="www.github.com"
+            ;;
+        10)
+            domain="www.cloudflare.com"
+            ;;
+        0)
+            echo -e "请输入自定义域名："
+            read -p "(例如: example.com): " domain
+            [ -z "$domain" ] && domain="learn.microsoft.com"
+            ;;
+        *)
+            domain="learn.microsoft.com"
+            ;;
+    esac
+    
+    echo
+    echo
+    echo -e "证书域名 Certificate Domain = ${domain}"
+    echo "----------------------------------------------------------------"
+    echo
+fi
+
 
     # 密码
     if [[ -z $pwd ]]; then
