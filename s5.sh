@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 交互式 socks5 管理脚本（安装 / 修改 / 卸载）
+# 交互式 socks5 管理脚本（安装 / 修改 / 卸载 / 状态改进）
 # 安装并启动后会自动检测本机公网 IP（若不可用则回退本地 IP），并输出：
 #  - socks://user:pass@IP:PORT
 #  - Telegram 快链：https://t.me/socks?server=IP&port=PORT&user=USER&pass=PASS
@@ -19,8 +19,8 @@ echo -e "${GREEN}
   ____   ___   ____ _  ______ ____  
  / ___| / _ \\ / ___| |/ / ___| ___|  
  \\___ \\| | | | |   | ' /\\___ \\___ \\ 
-  ___) | |_| | |___| . \\ ___) |__) |           不要直连
- |____/ \\___/ \\____|_|\\_\\____/____/            没有售后   
+  ___) | |_| | |___| . \\ ___) |__) |           
+ |____/ \\___/ \\____|_|\\_\\____/____/  没有售后   
  djkyc
 ${RESET}"
 
@@ -251,6 +251,18 @@ urlencode() {
   fi
 }
 
+# 检查端口是否有监听（尝试 ss -> netstat）
+is_port_listening() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -E "[:.]${port}$" >/dev/null 2>&1 && return 0 || return 1
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "[:.]${port}$" >/dev/null 2>&1 && return 0 || return 1
+  else
+    return 1
+  fi
+}
+
 # 在启动成功后显示链接（socks 和 Telegram 快链）
 show_links() {
   local ip port user pass enc_user enc_pass enc_ip tlink socksurl
@@ -418,6 +430,184 @@ modify_flow() {
   return 0
 }
 
+# 改进：状态显示包括 用户/密码/端口/本机IP/监听检测/代理连通性检测
+status_flow() {
+  ensure_workdir
+  load_meta
+
+  echo
+  echo "---- SOCKS5 状态 ----"
+
+  # 显示配置信息（若存在）
+  if [ -f "${META_FILE}" ]; then
+    echo "配置（保存在 ${META_FILE}）："
+    # 显示用户名、端口、密码（可选择掩码显示密码一部分）
+    printf "  用户名: %s\n" "${USERNAME:-(未设置)}"
+    printf "  端口: %s\n" "${PORT:-(未设置)}"
+    # 简单掩码：显示前2后2，若长度 <=4 显示全部
+    if [ -n "${PASSWORD:-}" ]; then
+      passlen=${#PASSWORD}
+      if [ "${passlen}" -le 4 ]; then
+        printf "  密码: %s\n" "${PASSWORD}"
+      else
+        prefix=${PASSWORD:0:2}
+        suffix=${PASSWORD: -2}
+        printf "  密码: %s****%s\n" "${prefix}" "${suffix}"
+      fi
+    else
+      printf "  密码: %s\n" "(未设置)\n"
+    fi
+    printf "  实现类型: %s\n" "${BIN_TYPE:-(未知)}"
+  else
+    echo "未找到配置 (meta)。"
+  fi
+
+  # 本机 IP 检测
+  ip="$(get_best_ip)"
+  printf "  本机检测到的 IP: %s\n" "${ip}"
+
+  # 进程/监听检测
+  running_msg="未运行"
+  if [ -f "${PID_FILE}" ]; then
+    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+    if [ -n "${pid}" ] && kill -0 "${pid}" >/dev/null 2>&1; then
+      running_msg="运行中 (PID ${pid})"
+    else
+      running_msg="PID 文件存在但进程未运行"
+    fi
+  else
+    # 检查常见进程名
+    if pgrep -x s5 >/dev/null 2>&1 || pgrep -x 3proxy >/dev/null 2>&1 || pgrep -x microsocks >/dev/null 2>&1 || pgrep -x ss5 >/dev/null 2>&1; then
+      running_msg="检测到相关进程在运行（无 PID 文件）"
+    fi
+  fi
+  printf "  运行状态: %s\n" "${running_msg}"
+
+  # 端口监听检测
+  if [ -n "${PORT:-}" ]; then
+    if is_port_listening "${PORT}"; then
+      printf "  端口监听: 是 (端口 %s 正在监听)\n" "${PORT}"
+    else
+      printf "  端口监听: 否 (未检测到 %s 端口监听)\n" "${PORT}"
+    fi
+  else
+    printf "  端口监听: 无端口配置\n"
+  fi
+
+  # 通过代理进行连通性检测（只在有端口、用户名、密码时尝试）
+  if [ -n "${PORT:-}" ] && [ -n "${USERNAME:-}" ] && [ -n "${PASSWORD:-}" ]; then
+    # 使用本地回环测试代理是否能访问外网 IP 服务
+    proxy_auth="${USERNAME}:${PASSWORD}@127.0.0.1:${PORT}"
+    # 尝试多个服务以增加成功率
+    probe_ip=""
+    for svc in "https://icanhazip.com" "https://ifconfig.me" "https://ipinfo.io/ip" "https://4.ipw.cn"; do
+      probe_ip=$(curl -s --max-time 5 --socks5 "${proxy_auth}" "${svc}" || true)
+      probe_ip=$(echo "${probe_ip}" | tr -d '[:space:]')
+      if [[ "${probe_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        break
+      fi
+    done
+
+    if [[ "${probe_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf "  代理连通性: 正常 (通过代理外网返回 IP: %s)\n" "${probe_ip}"
+      # 显示可直接用的 socks URL 与 Telegram 快链（对 user/pass/ip 做 URL 编码）
+      enc_user="$(urlencode "${USERNAME}")"
+      enc_pass="$(urlencode "${PASSWORD}")"
+      enc_ip="$(urlencode "${probe_ip}")"
+      printf "  socks URL: socks://%s:%s@%s:%s\n" "${USERNAME}" "${PASSWORD}" "${probe_ip}" "${PORT}"
+      printf "  Telegram 快链: https://t.me/socks?server=%s&port=%s&user=%s&pass=%s\n" "${enc_ip}" "${PORT}" "${enc_user}" "${enc_pass}"
+    else
+      printf "  代理连通性: 无法通过本地代理访问外网（可能未启动或认证失败）\n"
+      echo "  建议：检查日志 / 确认实现类型并手动尝试使用 curl --socks5 user:pass@127.0.0.1:port <url>"
+    fi
+  else
+    echo "  代理连通性: 跳过（缺少端口/用户名/密码）"
+  fi
+
+  echo "-----------------------"
+}
+
+install_flow() {
+  ensure_workdir
+  echo "安装/配置 socks5（交互）"
+  prompt "监听端口" "${DEFAULT_PORT}" PORT
+  if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
+    echo "端口输入无效，使用默认 ${DEFAULT_PORT}"
+    PORT="${DEFAULT_PORT}"
+  fi
+  prompt "用户名" "${DEFAULT_USER}" USERNAME
+  prompt "密码（留空则自动生成）" "" PASSWORD
+  if [ -z "${PASSWORD}" ]; then
+    PASSWORD="$(random_pass)"
+    echo "已生成密码：${PASSWORD}"
+  fi
+
+  EXIST="$(detect_existing_impl || true)"
+  if [ -n "${EXIST}" ]; then
+    echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
+    BIN_TYPE="${EXIST}"
+  else
+    echo "未检测到受支持的实现，尝试安装 3proxy ..."
+    if try_install_3proxy; then
+      if command -v 3proxy >/dev/null 2>&1; then
+        BIN_TYPE="3proxy"
+        echo "已安装 3proxy"
+      fi
+    fi
+  fi
+
+  if [ -z "${BIN_TYPE}" ]; then
+    if download_fallback_s5; then
+      BIN_TYPE="s5"
+      echo "使用下载的备用 s5 二进制（已保存到 ${FALLBACK_S5_BIN}）"
+    else
+      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 3proxy/danted/microsocks，或检查网络。${RESET}"
+      return 1
+    fi
+  fi
+
+  save_meta
+  start_by_type "${BIN_TYPE}" || { echo "启动失败"; return 1; }
+  return 0
+}
+
+modify_flow() {
+  ensure_workdir
+  load_meta
+  if [ -z "${BIN_TYPE}" ]; then
+    EXIST="$(detect_existing_impl || true)"
+    BIN_TYPE="${EXIST:-}"
+  fi
+  if [ -z "${BIN_TYPE}" ]; then
+    echo -e "${YELLOW}未检测到现有安装。请先运行 安装。${RESET}"
+    return 1
+  fi
+
+  echo "修改 socks5 配置（当前实现：${BIN_TYPE}）"
+  prompt "新的监听端口（回车保留当前: ${PORT:-unset})" "${PORT:-${DEFAULT_PORT}}" NEW_PORT
+  if ! [[ "${NEW_PORT}" =~ ^[0-9]+$ ]] || [ "${NEW_PORT}" -lt 1 ] || [ "${NEW_PORT}" -gt 65535 ]; then
+    echo "端口无效，保留原值"
+    NEW_PORT="${PORT}"
+  fi
+  prompt "新的用户名（回车保留当前: ${USERNAME:-unset})" "${USERNAME:-${DEFAULT_USER}}" NEW_USER
+  prompt "新的密码（留空则自动生成）" "" NEW_PASS
+  if [ -z "${NEW_PASS}" ]; then
+    NEW_PASS="$(random_pass)"
+    echo "已生成新密码：${NEW_PASS}"
+  fi
+
+  PORT="${NEW_PORT}"
+  USERNAME="${NEW_USER}"
+  PASSWORD="${NEW_PASS}"
+
+  save_meta
+  echo "正在重启代理以应用修改..."
+  stop_socks
+  start_by_type "${BIN_TYPE}" || { echo "重启失败，请检查日志"; return 1; }
+  echo -e "${GREEN}修改并重启完成。${RESET}"
+  return 0
+}
+
 uninstall_flow() {
   ensure_workdir
   echo -e "${YELLOW}卸载将停止代理并删除目录：${WORKDIR}。此操作不可恢复。${RESET}"
@@ -429,31 +619,6 @@ uninstall_flow() {
   stop_socks
   rm -rf "${WORKDIR}" && echo "已删除 ${WORKDIR}" || echo "删除 ${WORKDIR} 时出错或该目录不存在。"
   return 0
-}
-
-status_flow() {
-  ensure_workdir
-  load_meta
-  if [ -f "${PID_FILE}" ]; then
-    pid="$(cat "${PID_FILE}")"
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      echo -e "${GREEN}socks5 正在运行，PID=${pid}${RESET}"
-    else
-      echo -e "${YELLOW}PID 文件存在但进程未运行。${RESET}"
-    fi
-  else
-    if pgrep -x s5 >/dev/null 2>&1 || pgrep -x 3proxy >/dev/null 2>&1; then
-      echo -e "${GREEN}检测到 socks5 相关进程在运行（但无 PID 文件）。${RESET}"
-    else
-      echo -e "${YELLOW}未检测到 socks5 运行。${RESET}"
-    fi
-  fi
-  if [ -f "${META_FILE}" ]; then
-    echo "当前配置："
-    sed -n '1,3p' "${META_FILE}" || true
-  else
-    echo "未找到配置（meta）。"
-  fi
 }
 
 main_menu() {
