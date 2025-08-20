@@ -5,7 +5,7 @@
 set -e
 
 # 检查 root
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -ne 0 ]]; 键，然后
   echo "请用 root 权限运行此脚本。" >&2
   exit 1
 fi
