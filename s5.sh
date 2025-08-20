@@ -1,7 +1,7 @@
 #!/bin/bash
 # 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)
 # By:djkyc
-# Date: 2025-08-20 09:00:50
+# Date: 2025-08-20 09:03:49
 
 # 检查 root
 if [[ $EUID -ne 0 ]]; then
@@ -47,7 +47,19 @@ install_deps() {
     cd /
     rm -rf /tmp/microsocks
     echo "依赖安装完成！"
-    pause
+}
+
+# 显示菜单
+show_menu() {
+    clear_screen
+    echo "------------------------"
+    echo "Socks5 管理脚本"
+    echo "------------------------"
+    echo "1. 安装 Socks5"
+    echo "2. 卸载 Socks5"
+    echo "3. 修改配置"
+    echo "4. 退出"
+    echo "------------------------"
 }
 
 # 安装 Socks5 函数
@@ -147,14 +159,26 @@ modify_config() {
             1)
                 read -p "请输入新端口 (1024-65535): " new_port
                 sed -i "s/-p [0-9]*/-p ${new_port}/" /etc/systemd/system/microsocks.service
+                systemctl daemon-reload
+                systemctl restart microsocks
+                echo "端口已修改并重启服务！"
+                pause
                 ;;
             2)
                 read -p "请输入新用户名: " new_user
                 sed -i "s/-u [^ ]*/-u ${new_user}/" /etc/systemd/system/microsocks.service
+                systemctl daemon-reload
+                systemctl restart microsocks
+                echo "用户名已修改并重启服务！"
+                pause
                 ;;
             3)
                 read -p "请输入新密码: " new_pass
                 sed -i "s/-P [^ ]*/-P ${new_pass}/" /etc/systemd/system/microsocks.service
+                systemctl daemon-reload
+                systemctl restart microsocks
+                echo "密码已修改并重启服务！"
+                pause
                 ;;
             4)
                 return
@@ -162,34 +186,23 @@ modify_config() {
             *)
                 echo "无效选择"
                 pause
-                continue
                 ;;
         esac
-
-        systemctl daemon-reload
-        systemctl restart microsocks
-        echo "配置已更新，服务已重启！"
-        pause
     done
 }
 
-# 主菜单
+# 检查是否已安装依赖
+if ! command -v microsocks &>/dev/null; then
+    install_deps
+fi
+
+# 主循环
 while true; do
-    clear_screen
-    echo "------------------------"
-    echo "Socks5 管理脚本"
-    echo "------------------------"
-    echo "1. 安装 Socks5"
-    echo "2. 卸载 Socks5"
-    echo "3. 修改配置"
-    echo "4. 退出"
+    show_menu
     read -p "请选择 [1-4]: " choice
 
     case $choice in
         1)
-            if ! command -v microsocks &>/dev/null; then
-                install_deps
-            fi
             install_socks5
             ;;
         2)
