@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 #
 # 交互式 socks5 管理脚本（安装 / 修改 / 卸载）
-# 要求：显示交互菜单（仅显示安装/卸载/修改），并尽量在各种内核/发行版上工作。
-# 说明：脚本会尝试使用系统已存在的 socks5 实现（3proxy、microsocks、s5、ss5、danted 等）。
-#    - 若系统无可用实现，会尝试使用常见包管理器安装 3proxy（静默尝试）。
-#    - 若安装失败，会下载备用二进制到工作目录并使用 JSON 配置运行（兼容原始 s5 二进制）。
-# 注意：脚本在通过管道执行（curl | bash）时也能交互（read 从 /dev/tty 读取）。
-#
+# 安装并启动后会自动检测本机公网 IP（若不可用则回退本地 IP），并输出：
+#  - socks://user:pass@IP:PORT
+#  - Telegram 快链：https://t.me/socks?server=IP&port=PORT&user=USER&pass=PASS
 # 头部显示：djkyc
 #
 set -o errexit
 set -o nounset
 set -o pipefail
 
-# 输出颜色（若终端不支持则仍然安全）
 GREEN="\e[32m"
 YELLOW="\e[33m"
 RED="\e[31m"
@@ -28,7 +24,6 @@ echo -e "${GREEN}
  djkyc
 ${RESET}"
 
-# 全局路径与文件
 WORKDIR="${HOME:-/root}/.s5_manager"
 PID_FILE="${WORKDIR}/s5.pid"
 META_FILE="${WORKDIR}/meta.env"
@@ -39,16 +34,13 @@ FALLBACK_S5_BIN="${WORKDIR}/s5_fallback"
 DEFAULT_PORT=1080
 DEFAULT_USER="s5user"
 
-# 兼容的实现名优先级
 PREFERRED_IMPLS=("s5" "3proxy" "microsocks" "ss5" "danted" "sockd")
 
-# 确保工作目录存在
 ensure_workdir() {
   mkdir -p "${WORKDIR}"
   chmod 700 "${WORKDIR}"
 }
 
-# 从 meta.env 加载（若存在）
 load_meta() {
   if [ -f "${META_FILE}" ]; then
     # shellcheck disable=SC1090
@@ -61,7 +53,6 @@ load_meta() {
   fi
 }
 
-# 保存 meta
 save_meta() {
   cat > "${META_FILE}" <<EOF
 PORT='${PORT}'
@@ -72,14 +63,12 @@ EOF
   chmod 600 "${META_FILE}"
 }
 
-# 安全地从终端读取（支持 curl | bash 场景）
 prompt() {
   local prompt_text="$1"
   local default="${2:-}"
   local varname="$3"
   local input
   if [ -n "${default}" ]; then
-    # shellcheck disable=SC2034
     printf "%s [%s]: " "${prompt_text}" "${default}" > /dev/tty
   else
     printf "%s: " "${prompt_text}" > /dev/tty
@@ -91,12 +80,10 @@ prompt() {
   printf -v "${varname}" "%s" "${input}"
 }
 
-# 简单随机密码生成
 random_pass() {
   tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12 || echo "s5pass123"
 }
 
-# 检测系统中已有实现（按优先级）
 detect_existing_impl() {
   for impl in "${PREFERRED_IMPLS[@]}"; do
     case "${impl}" in
@@ -132,13 +119,11 @@ detect_existing_impl() {
         ;;
     esac
   done
-  # 没有发现
   echo ""
 }
 
-# 尝试使用系统包管理器安装 3proxy（静默尝试）
 try_install_3proxy() {
-  echo "尝试通过包管理器安装 3proxy（若 root 权限且仓库可用）..."
+  echo "尝试通过包管理器安装 3proxy..."
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y && apt-get install -y 3proxy && return 0 || return 1
   elif command -v yum >/dev/null 2>&1; then
@@ -155,7 +140,6 @@ try_install_3proxy() {
   return 1
 }
 
-# 下载备用 s5 二进制到 WORKDIR（最后手段）
 download_fallback_s5() {
   echo "下载备用 s5 二进制到 ${FALLBACK_S5_BIN} ..."
   curl -L -sS -o "${FALLBACK_S5_BIN}" "${FALLBACK_S5_URL}" || return 1
@@ -163,11 +147,9 @@ download_fallback_s5() {
   return 0
 }
 
-# 生成 3proxy 配置
 generate_3proxy_cfg() {
   local port="$1" user="$2" pass="$3" cfg="${CONFIG_3PROXY}"
   cat > "${cfg}" <<EOF
-# 3proxy config (generated)
 daemon
 maxconn 100
 nserver 8.8.8.8
@@ -182,7 +164,6 @@ EOF
   echo "${cfg}"
 }
 
-# 生成 s5 JSON config
 generate_s5_json() {
   local port="$1" user="$2" pass="$3" cfg="${CONFIG_S5}"
   cat > "${cfg}" <<EOF
@@ -223,7 +204,74 @@ EOF
   echo "${cfg}"
 }
 
-# 启动代理（根据 BIN_TYPE）
+# 获取公网 IP（优先），回退到本地路由/hostname，最后回退 127.0.0.1
+get_best_ip() {
+  local ip
+  for svc in "https://icanhazip.com" "https://ifconfig.me" "https://ipinfo.io/ip" "https://4.ipw.cn"; do
+    ip=$(curl -s --max-time 5 "$svc" || true)
+    ip=$(echo "$ip" | tr -d '[:space:]')
+    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  done
+
+  if command -v ip >/dev/null 2>&1; then
+    ip=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {print $7; exit}')
+    ip=$(echo "$ip" | tr -d '[:space:]')
+    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    ip=$(echo "$ip" | tr -d '[:space:]')
+    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  fi
+
+  echo "127.0.0.1"
+}
+
+# URL 编码（尝试 python3 / python / perl，否者原样返回）
+urlencode() {
+  local s="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import sys,urllib.parse as u; print(u.quote(sys.argv[1], safe=''))" "$s"
+  elif command -v python >/dev/null 2>&1; then
+    python -c "import sys,urllib as u; print(u.quote(sys.argv[1]))" "$s"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -MURI::Escape -e 'print uri_escape($ARGV[0]);' "$s"
+  else
+    printf '%s' "$s"
+  fi
+}
+
+# 在启动成功后显示链接（socks 和 Telegram 快链）
+show_links() {
+  local ip port user pass enc_user enc_pass enc_ip tlink socksurl
+  ip="$(get_best_ip)"
+  port="${PORT}"
+  user="${USERNAME}"
+  pass="${PASSWORD}"
+  enc_user="$(urlencode "$user")"
+  enc_pass="$(urlencode "$pass")"
+  enc_ip="$(urlencode "$ip")"
+
+  socksurl="socks://${user}:${pass}@${ip}:${port}"
+  tlink="https://t.me/socks?server=${enc_ip}&port=${port}&user=${enc_user}&pass=${enc_pass}"
+
+  echo
+  echo -e "${GREEN}安装并启动完成:${RESET}"
+  echo "socks 地址示例：${socksurl}"
+  echo "Telegram 快链：${tlink}"
+  echo
+}
+
 start_by_type() {
   local type="$1"
   case "${type}" in
@@ -233,7 +281,6 @@ start_by_type() {
       echo "$!" > "${PID_FILE}"
       ;;
     s5)
-      # 优先使用系统 s5（若存在），否则使用下载的 fallback
       if command -v s5 >/dev/null 2>&1; then
         BIN_PATH="$(command -v s5)"
         generate_s5_json "${PORT}" "${USERNAME}" "${PASSWORD}" >/dev/null
@@ -246,12 +293,10 @@ start_by_type() {
       fi
       ;;
     microsocks)
-      # microsocks 启动：microsocks -p PORT -u USER -P PASS
       nohup microsocks -p "${PORT}" -u "${USERNAME}" -P "${PASSWORD}" >/dev/null 2>&1 &
       echo "$!" > "${PID_FILE}"
       ;;
     ss5)
-      # ss5 的启动参数可能依实现不同；此处尽力尝试简单方式（若失败，请手动启动）
       nohup ss5 -u "${USERNAME}:${PASSWORD}" -p "${PORT}" >/dev/null 2>&1 &
       echo "$!" > "${PID_FILE}"
       ;;
@@ -268,6 +313,7 @@ start_by_type() {
   sleep 1
   if [ -f "${PID_FILE}" ] && kill -0 "$(cat "${PID_FILE}")" >/dev/null 2>&1; then
     echo -e "${GREEN}已启动 ${type}，PID=$(cat "${PID_FILE}")${RESET}"
+    show_links
     return 0
   else
     echo -e "${RED}启动失败（查看日志或手动启动）。${RESET}"
@@ -275,7 +321,6 @@ start_by_type() {
   fi
 }
 
-# 停止运行代理（PID 文件优先）
 stop_socks() {
   if [ -f "${PID_FILE}" ]; then
     pid="$(cat "${PID_FILE}")"
@@ -285,7 +330,6 @@ stop_socks() {
       rm -f "${PID_FILE}" || true
     fi
   fi
-  # 兜底按常见进程名停止
   for p in s5 3proxy microsocks ss5 danted sockd; do
     if pgrep -x "${p}" >/dev/null 2>&1; then
       pkill -x "${p}" || true
@@ -293,13 +337,10 @@ stop_socks() {
   done
 }
 
-# 安装流程（交互）
 install_flow() {
   ensure_workdir
   echo "安装/配置 socks5（交互）"
-  # 询问端口/用户/密码（从终端读取）
   prompt "监听端口" "${DEFAULT_PORT}" PORT
-  # 简单校验端口为数字范围
   if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
     echo "端口输入无效，使用默认 ${DEFAULT_PORT}"
     PORT="${DEFAULT_PORT}"
@@ -311,13 +352,12 @@ install_flow() {
     echo "已生成密码：${PASSWORD}"
   fi
 
-  # 检测已有实现
   EXIST="$(detect_existing_impl || true)"
   if [ -n "${EXIST}" ]; then
     echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
     BIN_TYPE="${EXIST}"
   else
-    echo "未检测到受支持的 socks5 实现，尝试安装 3proxy ..."
+    echo "未检测到受支持的实现，尝试安装 3proxy ..."
     if try_install_3proxy; then
       if command -v 3proxy >/dev/null 2>&1; then
         BIN_TYPE="3proxy"
@@ -326,7 +366,6 @@ install_flow() {
     fi
   fi
 
-  # 若仍未选择实现，尝试下载备用 s5
   if [ -z "${BIN_TYPE}" ]; then
     if download_fallback_s5; then
       BIN_TYPE="s5"
@@ -339,11 +378,9 @@ install_flow() {
 
   save_meta
   start_by_type "${BIN_TYPE}" || { echo "启动失败"; return 1; }
-  echo -e "${GREEN}安装并启动完成。socks 地址示例：socks://${USERNAME}:${PASSWORD}@<your-ip>:${PORT}${RESET}"
   return 0
 }
 
-# 修改流程（交互）
 modify_flow() {
   ensure_workdir
   load_meta
@@ -377,11 +414,10 @@ modify_flow() {
   echo "正在重启代理以应用修改..."
   stop_socks
   start_by_type "${BIN_TYPE}" || { echo "重启失败，请检查日志"; return 1; }
-  echo -e "${GREEN}修改并重启完成。socks://${USERNAME}:${PASSWORD}@<your-ip>:${PORT}${RESET}"
+  echo -e "${GREEN}修改并重启完成。${RESET}"
   return 0
 }
 
-# 卸载流程（交互）
 uninstall_flow() {
   ensure_workdir
   echo -e "${YELLOW}卸载将停止代理并删除目录：${WORKDIR}。此操作不可恢复。${RESET}"
@@ -395,7 +431,6 @@ uninstall_flow() {
   return 0
 }
 
-# 状态显示（简短）
 status_flow() {
   ensure_workdir
   load_meta
@@ -421,7 +456,6 @@ status_flow() {
   fi
 }
 
-# 主交互菜单（只显示：安装 / 修改 / 卸载）
 main_menu() {
   while true; do
     echo
@@ -431,7 +465,6 @@ main_menu() {
     echo "3) 卸载 socks5"
     echo "4) 状态"
     echo "5) 退出"
-    # 读入来自 /dev/tty，确保 curl|bash 场景也能交互
     read -r -p "请选择 (1-5): " opt < /dev/tty || opt="5"
     case "${opt}" in
       1) install_flow ;;
@@ -444,7 +477,6 @@ main_menu() {
   done
 }
 
-# 启动
 ensure_workdir
 load_meta
 main_menu
