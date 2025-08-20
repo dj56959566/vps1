@@ -62,6 +62,21 @@ config_users() {
     done
     echo "已保存到 $CONFIG_FILE"
 }
+print_links() {
+    PORT=$(grep -oP '(?<=ExecStart=/usr/bin/microsocks -i 0.0.0.0 -p )\d+' /etc/systemd/system/microsocks.service)
+    [[ -z "$PORT" ]] && PORT=1080
+
+    IP=$(curl -s ipv4.ip.sb || curl -s ifconfig.me || curl -s ipinfo.io/ip)
+
+    echo -e "\n${GREEN}=== SOCKS5 一键链接 ===${RESET}"
+    while IFS=: read -r USER PASS; do
+        [[ -z "$USER" || -z "$PASS" ]] && continue
+        echo -e "账号: ${USER} / 密码: ${PASS}"
+        echo "socks://$USER:$PASS@$IP:$PORT"
+        echo "https://t.me/socks?server=$IP&port=$PORT&user=$USER&pass=$PASS"
+        echo "----------------------------------"
+    done < /etc/microsocks/users.conf
+}
 
 # ---------------------------
 # 生成 systemd 服务文件
