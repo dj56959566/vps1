@@ -21,7 +21,7 @@ echo -e "${GREEN}
  \\___ \\| | | | |   | ' /\\___ \\___ \\ 
   ___) | |_| | |___| . \\ ___) |__) |           
  |____/ \\___/ \\____|_|\\_\\____/____/  没有售后   
- djkyc
+ By:djkyc 用:microsocks 鸣谢:eooce
 ${RESET}"
 
 WORKDIR="${HOME:-/root}/.s5_manager"
@@ -371,14 +371,14 @@ install_flow() {
   else
     echo "未检测到受支持的实现，尝试安装 3proxy ..."
     if try_install_3proxy; then
-      if command -v 3proxy >/dev/null 2>&1; then
+      if command -v 3proxy >/dev/null 2>&1; 键，然后
         BIN_TYPE="3proxy"
         echo "已安装 3proxy"
       fi
     fi
   fi
 
-  if [ -z "${BIN_TYPE}" ]; then
+  if [ -z "${BIN_TYPE}" ]; 键，然后
     if download_fallback_s5; then
       BIN_TYPE="s5"
       echo "使用下载的备用 s5 二进制（已保存到 ${FALLBACK_S5_BIN}）"
@@ -396,7 +396,7 @@ install_flow() {
 modify_flow() {
   ensure_workdir
   load_meta
-  if [ -z "${BIN_TYPE}" ]; then
+  if [ -z "${BIN_TYPE}" ]; 键，然后
     EXIST="$(detect_existing_impl || true)"
     BIN_TYPE="${EXIST:-}"
   fi
