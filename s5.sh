@@ -21,7 +21,7 @@ echo -e "${GREEN}
  \\___ \\| | | | |   | ' /\\___ \\___ \\ 
   ___) | |_| | |___| . \\ ___) |__) |           
  |____/ \\___/ \\____|_|\\_\\____/____/  没有售后   
- By:djkyc 用:microsocks 鸣谢:eooce
+ Djkyc 鸣谢:eooce 本脚本用:microsocks编写
 ${RESET}"
 
 WORKDIR="${HOME:-/root}/.s5_manager"
@@ -65,7 +65,7 @@ EOF
 
 prompt() {
   local prompt_text="$1"
-  local default="${2:-}"
+  local 默认="${2:-}"
   local varname="$3"
   local input
   if [ -n "${default}" ]; then
@@ -263,7 +263,7 @@ is_port_listening() {
   fi
 }
 
-# 在启动成功后显示链接（socks 和 Telegram 快链），全部用绿色输出
+# 在启动成功后显示链接（socks 和 Telegram 快链）
 show_links() {
   local ip port user pass enc_user enc_pass enc_ip tlink socksurl
   ip="$(get_best_ip)"
@@ -277,12 +277,11 @@ show_links() {
   socksurl="socks://${user}:${pass}@${ip}:${port}"
   tlink="https://t.me/socks?server=${enc_ip}&port=${port}&user=${enc_user}&pass=${enc_pass}"
 
-  # 整块以绿色输出
-  echo -e "${GREEN}"
-  echo "安装并启动完成:"
+  echo
+  echo -e "${GREEN}安装并启动完成:${RESET}"
   echo "socks 地址示例：${socksurl}"
   echo "Telegram 快链：${tlink}"
-  echo -e "${RESET}"
+  echo
 }
 
 start_by_type() {
@@ -431,7 +430,7 @@ modify_flow() {
   return 0
 }
 
-# 改进：状态显示包括 用户/密码/端口/本机IP/监听检测/代理连通性检测（成功信息用绿色）
+# 改进：状态显示包括 用户/密码/端口/本机IP/监听检测/代理连通性检测
 status_flow() {
   ensure_workdir
   load_meta
@@ -442,8 +441,10 @@ status_flow() {
   # 显示配置信息（若存在）
   if [ -f "${META_FILE}" ]; then
     echo "配置（保存在 ${META_FILE}）："
+    # 显示用户名、端口、密码（可选择掩码显示密码一部分）
     printf "  用户名: %s\n" "${USERNAME:-(未设置)}"
     printf "  端口: %s\n" "${PORT:-(未设置)}"
+    # 简单掩码：显示前2后2，若长度 <=4 显示全部
     if [ -n "${PASSWORD:-}" ]; then
       passlen=${#PASSWORD}
       if [ "${passlen}" -le 4 ]; then
@@ -475,6 +476,7 @@ status_flow() {
       running_msg="PID 文件存在但进程未运行"
     fi
   else
+    # 检查常见进程名
     if pgrep -x s5 >/dev/null 2>&1 || pgrep -x 3proxy >/dev/null 2>&1 || pgrep -x microsocks >/dev/null 2>&1 || pgrep -x ss5 >/dev/null 2>&1; then
       running_msg="检测到相关进程在运行（无 PID 文件）"
     fi
@@ -494,7 +496,9 @@ status_flow() {
 
   # 通过代理进行连通性检测（只在有端口、用户名、密码时尝试）
   if [ -n "${PORT:-}" ] && [ -n "${USERNAME:-}" ] && [ -n "${PASSWORD:-}" ]; then
+    # 使用本地回环测试代理是否能访问外网 IP 服务
     proxy_auth="${USERNAME}:${PASSWORD}@127.0.0.1:${PORT}"
+    # 尝试多个服务以增加成功率
     probe_ip=""
     for svc in "https://icanhazip.com" "https://ifconfig.me" "https://ipinfo.io/ip" "https://4.ipw.cn"; do
       probe_ip=$(curl -s --max-time 5 --socks5 "${proxy_auth}" "${svc}" || true)
@@ -505,15 +509,13 @@ status_flow() {
     done
 
     if [[ "${probe_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      # 成功信息整块绿色显示
+      printf "  代理连通性: 正常 (通过代理外网返回 IP: %s)\n" "${probe_ip}"
+      # 显示可直接用的 socks URL 与 Telegram 快链（对 user/pass/ip 做 URL 编码）
       enc_user="$(urlencode "${USERNAME}")"
       enc_pass="$(urlencode "${PASSWORD}")"
       enc_ip="$(urlencode "${probe_ip}")"
-      echo -e "${GREEN}"
-      printf "  代理连通性: 正常 (通过代理外网返回 IP: %s)\n" "${probe_ip}"
       printf "  socks URL: socks://%s:%s@%s:%s\n" "${USERNAME}" "${PASSWORD}" "${probe_ip}" "${PORT}"
       printf "  Telegram 快链: https://t.me/socks?server=%s&port=%s&user=%s&pass=%s\n" "${enc_ip}" "${PORT}" "${enc_user}" "${enc_pass}"
-      echo -e "${RESET}"
     else
       printf "  代理连通性: 无法通过本地代理访问外网（可能未启动或认证失败）\n"
       echo "  建议：检查日志 / 确认实现类型并手动尝试使用 curl --socks5 user:pass@127.0.0.1:port <url>"
@@ -523,6 +525,100 @@ status_flow() {
   fi
 
   echo "-----------------------"
+}
+
+install_flow() {
+  ensure_workdir
+  echo "安装/配置 socks5（交互）"
+  prompt "监听端口" "${DEFAULT_PORT}" PORT
+  if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
+    echo "端口输入无效，使用默认 ${DEFAULT_PORT}"
+    PORT="${DEFAULT_PORT}"
+  fi
+  prompt "用户名" "${DEFAULT_USER}" USERNAME
+  prompt "密码（留空则自动生成）" "" PASSWORD
+  if [ -z "${PASSWORD}" ]; then
+    PASSWORD="$(random_pass)"
+    echo "已生成密码：${PASSWORD}"
+  fi
+
+  EXIST="$(detect_existing_impl || true)"
+  if [ -n "${EXIST}" ]; then
+    echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
+    BIN_TYPE="${EXIST}"
+  else
+    echo "未检测到受支持的实现，尝试安装 3proxy ..."
+    if try_install_3proxy; then
+      if command -v 3proxy >/dev/null 2>&1; then
+        BIN_TYPE="3proxy"
+        echo "已安装 3proxy"
+      fi
+    fi
+  fi
+
+  if [ -z "${BIN_TYPE}" ]; then
+    if download_fallback_s5; then
+      BIN_TYPE="s5"
+      echo "使用下载的备用 s5 二进制（已保存到 ${FALLBACK_S5_BIN}）"
+    else
+      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 3proxy/danted/microsocks，或检查网络。${RESET}"
+      return 1
+    fi
+  fi
+
+  save_meta
+  start_by_type "${BIN_TYPE}" || { echo "启动失败"; return 1; }
+  return 0
+}
+
+modify_flow() {
+  ensure_workdir
+  load_meta
+  if [ -z "${BIN_TYPE}" ]; then
+    EXIST="$(detect_existing_impl || true)"
+    BIN_TYPE="${EXIST:-}"
+  fi
+  if [ -z "${BIN_TYPE}" ]; then
+    echo -e "${YELLOW}未检测到现有安装。请先运行 安装。${RESET}"
+    return 1
+  fi
+
+  echo "修改 socks5 配置（当前实现：${BIN_TYPE}）"
+  prompt "新的监听端口（回车保留当前: ${PORT:-unset})" "${PORT:-${DEFAULT_PORT}}" NEW_PORT
+  if ! [[ "${NEW_PORT}" =~ ^[0-9]+$ ]] || [ "${NEW_PORT}" -lt 1 ] || [ "${NEW_PORT}" -gt 65535 ]; then
+    echo "端口无效，保留原值"
+    NEW_PORT="${PORT}"
+  fi
+  prompt "新的用户名（回车保留当前: ${USERNAME:-unset})" "${USERNAME:-${DEFAULT_USER}}" NEW_USER
+  prompt "新的密码（留空则自动生成）" "" NEW_PASS
+  if [ -z "${NEW_PASS}" ]; then
+    NEW_PASS="$(random_pass)"
+    echo "已生成新密码：${NEW_PASS}"
+  fi
+
+  PORT="${NEW_PORT}"
+  USERNAME="${NEW_USER}"
+  PASSWORD="${NEW_PASS}"
+
+  save_meta
+  echo "正在重启代理以应用修改..."
+  stop_socks
+  start_by_type "${BIN_TYPE}" || { echo "重启失败，请检查日志"; return 1; }
+  echo -e "${GREEN}修改并重启完成。${RESET}"
+  return 0
+}
+
+uninstall_flow() {
+  ensure_workdir
+  echo -e "${YELLOW}卸载将停止代理并删除目录：${WORKDIR}。此操作不可恢复。${RESET}"
+  prompt "确认卸载并删除所有文件？输入 Y 确认" "N" CONFIRM
+  if [ "${CONFIRM}" != "Y" ]; then
+    echo "已取消卸载。"
+    return 0
+  fi
+  stop_socks
+  rm -rf "${WORKDIR}" && echo "已删除 ${WORKDIR}" || echo "删除 ${WORKDIR} 时出错或该目录不存在。"
+  return 0
 }
 
 main_menu() {
@@ -535,7 +631,7 @@ main_menu() {
     echo "4) 状态"
     echo "5) 退出"
     read -r -p "请选择 (1-5): " opt < /dev/tty || opt="5"
-    case "${opt}" 在
+    case "${opt}" in
       1) install_flow ;;
       2) modify_flow ;;
       3) uninstall_flow ;;
