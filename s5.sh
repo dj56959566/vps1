@@ -34,7 +34,8 @@ FALLBACK_S5_BIN="${WORKDIR}/s5_fallback"
 DEFAULT_PORT=1080
 DEFAULT_USER="s5user"
 
-PREFERRED_IMPLS=("s5" "3proxy" "microsocks" "ss5" "danted" "sockd")
+# 优先使用 microsocks
+PREFERRED_IMPLS=("microsocks" "s5" "3proxy" "ss5" "danted" "sockd")
 
 ensure_workdir() {
   mkdir -p "${WORKDIR}"
@@ -120,6 +121,24 @@ detect_existing_impl() {
     esac
   done
   echo ""
+}
+
+try_install_microsocks() {
+  echo "尝试通过包管理器安装 microsocks..."
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y && apt-get install -y microsocks && return 0 || return 1
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y microsocks && return 0 || return 1
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y microsocks && return 0 || return 1
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache microsocks && return 0 || return 1
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm microsocks && return 0 || return 1
+  elif command -v pkg >/dev/null 2>&1; then
+    pkg install -y microsocks && return 0 || return 1
+  fi
+  return 1
 }
 
 try_install_3proxy() {
@@ -369,21 +388,29 @@ install_flow() {
     echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
     BIN_TYPE="${EXIST}"
   else
-    echo "未检测到受支持的实现，尝试安装 3proxy ..."
-    if try_install_3proxy; then
-      if command -v 3proxy >/dev/null 2>&1; 键，然后
-        BIN_TYPE="3proxy"
-        echo "已安装 3proxy"
+    echo "未检测到受支持的实现，尝试安装 microsocks ..."
+    if try_install_microsocks; then
+      if command -v microsocks >/dev/null 2>&1; then
+        BIN_TYPE="microsocks"
+        echo "已安装 microsocks"
+      else
+        echo "尝试安装 3proxy ..."
+        if try_install_3proxy; then
+          if command -v 3proxy >/dev/null 2>&1; then
+            BIN_TYPE="3proxy"
+            echo "已安装 3proxy"
+          fi
+        fi
       fi
     fi
   fi
 
-  if [ -z "${BIN_TYPE}" ]; 键，然后
+  if [ -z "${BIN_TYPE}" ]; then
     if download_fallback_s5; then
       BIN_TYPE="s5"
       echo "使用下载的备用 s5 二进制（已保存到 ${FALLBACK_S5_BIN}）"
     else
-      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 3proxy/danted/microsocks，或检查网络。${RESET}"
+      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 microsocks/3proxy/danted，或检查网络。${RESET}"
       return 1
     fi
   fi
@@ -396,7 +423,7 @@ install_flow() {
 modify_flow() {
   ensure_workdir
   load_meta
-  if [ -z "${BIN_TYPE}" ]; 键，然后
+  if [ -z "${BIN_TYPE}" ]; then
     EXIST="$(detect_existing_impl || true)"
     BIN_TYPE="${EXIST:-}"
   fi
@@ -455,7 +482,7 @@ status_flow() {
         printf "  密码: %s****%s\n" "${prefix}" "${suffix}"
       fi
     else
-      printf "  密码: %s\n" "(未设置)\n"
+      printf "  密码: %s\n" "(未设置)"
     fi
     printf "  实现类型: %s\n" "${BIN_TYPE:-(未知)}"
   else
@@ -525,87 +552,6 @@ status_flow() {
   fi
 
   echo "-----------------------"
-}
-
-install_flow() {
-  ensure_workdir
-  echo "安装/配置 socks5（交互）"
-  prompt "监听端口" "${DEFAULT_PORT}" PORT
-  if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
-    echo "端口输入无效，使用默认 ${DEFAULT_PORT}"
-    PORT="${DEFAULT_PORT}"
-  fi
-  prompt "用户名" "${DEFAULT_USER}" USERNAME
-  prompt "密码（留空则自动生成）" "" PASSWORD
-  if [ -z "${PASSWORD}" ]; then
-    PASSWORD="$(random_pass)"
-    echo "已生成密码：${PASSWORD}"
-  fi
-
-  EXIST="$(detect_existing_impl || true)"
-  if [ -n "${EXIST}" ]; then
-    echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
-    BIN_TYPE="${EXIST}"
-  else
-    echo "未检测到受支持的实现，尝试安装 3proxy ..."
-    if try_install_3proxy; then
-      if command -v 3proxy >/dev/null 2>&1; then
-        BIN_TYPE="3proxy"
-        echo "已安装 3proxy"
-      fi
-    fi
-  fi
-
-  if [ -z "${BIN_TYPE}" ]; then
-    if download_fallback_s5; then
-      BIN_TYPE="s5"
-      echo "使用下载的备用 s5 二进制（已保存到 ${FALLBACK_S5_BIN}）"
-    else
-      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 3proxy/danted/microsocks，或检查网络。${RESET}"
-      return 1
-    fi
-  fi
-
-  save_meta
-  start_by_type "${BIN_TYPE}" || { echo "启动失败"; return 1; }
-  return 0
-}
-
-modify_flow() {
-  ensure_workdir
-  load_meta
-  if [ -z "${BIN_TYPE}" ]; then
-    EXIST="$(detect_existing_impl || true)"
-    BIN_TYPE="${EXIST:-}"
-  fi
-  if [ -z "${BIN_TYPE}" ]; then
-    echo -e "${YELLOW}未检测到现有安装。请先运行 安装。${RESET}"
-    return 1
-  fi
-
-  echo "修改 socks5 配置（当前实现：${BIN_TYPE}）"
-  prompt "新的监听端口（回车保留当前: ${PORT:-unset})" "${PORT:-${DEFAULT_PORT}}" NEW_PORT
-  if ! [[ "${NEW_PORT}" =~ ^[0-9]+$ ]] || [ "${NEW_PORT}" -lt 1 ] || [ "${NEW_PORT}" -gt 65535 ]; then
-    echo "端口无效，保留原值"
-    NEW_PORT="${PORT}"
-  fi
-  prompt "新的用户名（回车保留当前: ${USERNAME:-unset})" "${USERNAME:-${DEFAULT_USER}}" NEW_USER
-  prompt "新的密码（留空则自动生成）" "" NEW_PASS
-  if [ -z "${NEW_PASS}" ]; then
-    NEW_PASS="$(random_pass)"
-    echo "已生成新密码：${NEW_PASS}"
-  fi
-
-  PORT="${NEW_PORT}"
-  USERNAME="${NEW_USER}"
-  PASSWORD="${NEW_PASS}"
-
-  save_meta
-  echo "正在重启代理以应用修改..."
-  stop_socks
-  start_by_type "${BIN_TYPE}" || { echo "重启失败，请检查日志"; return 1; }
-  echo -e "${GREEN}修改并重启完成。${RESET}"
-  return 0
 }
 
 uninstall_flow() {
