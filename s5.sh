@@ -2,10 +2,12 @@
 # ===========================================
 # Socks5 Proxy Manager - Microsocks Enhanced
 # By: djkyc   鸣谢: eooce
-# 本脚本: microsocks 专用版本
+# 本脚本: microsocks 专用版本，支持多账号
 # ===========================================
 
 GREEN="\033[32m"
+YELLOW="\033[33m"
+RED="\033[31m"
 RESET="\033[0m"
 
 echo -e "${GREEN}
@@ -26,7 +28,8 @@ PORT=1080
 # 获取公网 IP
 # ---------------------------
 get_ip() {
-    IP=$(curl -s ipv4.icanhazip.com || curl -s ifconfig.me || echo "127.0.0.1")
+    IP=$(curl -s ipv4.icanhazip.com || curl -s ifconfig.me || curl -s ipinfo.io/ip)
+    [[ -z "$IP" ]] && IP="127.0.0.1"
     echo "$IP"
 }
 
@@ -39,7 +42,7 @@ install_microsocks() {
         if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y && apt-get install -y microsocks
         elif command -v yum >/dev/null 2>&1; then
-            yum install -y epel-release -y
+            yum install -y epel-release
             yum install -y microsocks
         else
             echo "不支持的系统，请手动安装 microsocks"
@@ -62,27 +65,12 @@ config_users() {
     done
     echo "已保存到 $CONFIG_FILE"
 }
-print_links() {
-    PORT=$(grep -oP '(?<=ExecStart=/usr/bin/microsocks -i 0.0.0.0 -p )\d+' /etc/systemd/system/microsocks.service)
-    [[ -z "$PORT" ]] && PORT=1080
-
-    IP=$(curl -s ipv4.ip.sb || curl -s ifconfig.me || curl -s ipinfo.io/ip)
-
-    echo -e "\n${GREEN}=== SOCKS5 一键链接 ===${RESET}"
-    while IFS=: read -r USER PASS; do
-        [[ -z "$USER" || -z "$PASS" ]] && continue
-        echo -e "账号: ${USER} / 密码: ${PASS}"
-        echo "socks://$USER:$PASS@$IP:$PORT"
-        echo "https://t.me/socks?server=$IP&port=$PORT&user=$USER&pass=$PASS"
-        echo "----------------------------------"
-    done < /etc/microsocks/users.conf
-}
 
 # ---------------------------
 # 生成 systemd 服务文件
 # ---------------------------
 create_service() {
-    USERS=$(cat "$CONFIG_FILE" | awk -F: '{print "-u "$1" -P "$2}' | xargs)
+    USERS=$(awk -F: '{print "-u "$1" -P "$2}' "$CONFIG_FILE" | xargs)
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Microsocks Socks5 Proxy
@@ -113,6 +101,7 @@ modify_config() {
     create_service
     systemctl restart microsocks
     echo "配置已更新并重启"
+    print_links
 }
 
 # ---------------------------
@@ -136,14 +125,21 @@ status() {
     echo "监听端口: ${PORT}"
     echo "账号列表:"
     cat "$CONFIG_FILE"
+    print_links
+}
 
-    echo
-    echo "📌 可用的 socks5 链接："
+# ---------------------------
+# 打印 socks 链接（多账号 + 公网 IP）
+# ---------------------------
+print_links() {
     IP=$(get_ip)
-    while IFS=: read -r user pass; do
-        [[ "$user" =~ ^# ]] && continue
-        echo "socks5://${user}:${pass}@${IP}:${PORT}"
-        echo "https://t.me/socks?server=${IP}&port=${PORT}&user=${user}&pass=${pass}"
+    echo -e "\n${GREEN}=== SOCKS5 一键链接 ===${RESET}"
+    while IFS=: read -r USER PASS; do
+        [[ -z "$USER" || "$USER" =~ ^# ]] && continue
+        echo "账号: ${USER} / 密码: ${PASS}"
+        echo "socks://$USER:$PASS@$IP:$PORT"
+        echo "https://t.me/socks?server=$IP&port=$PORT&user=$USER&pass=$PASS"
+        echo "----------------------------------"
     done < "$CONFIG_FILE"
 }
 
@@ -151,7 +147,8 @@ status() {
 # 主菜单
 # ---------------------------
 main_menu() {
-    echo -e "
+    while true; do
+        echo -e "
 请选择操作:
 1) 安装 socks5
 2) 修改 socks5 配置
@@ -159,29 +156,34 @@ main_menu() {
 4) 状态 (含 socks 链接)
 5) 退出
 "
-    read -rp "请选择 (1-5): " choice
-    case "$choice" in
-        1)
-            install_microsocks
-            config_users
-            create_service
-            ;;
-        2)
-            modify_config
-            ;;
-        3)
-            uninstall
-            ;;
-        4)
-            status
-            ;;
-        5)
-            exit 0
-            ;;
-        *)
-            echo "无效选择"
-            ;;
-    esac
+        read -rp "请选择 (1-5): " choice
+        case "$choice" in
+            1)
+                install_microsocks
+                config_users
+                create_service
+                print_links
+                ;;
+            2)
+                modify_config
+                ;;
+            3)
+                uninstall
+                ;;
+            4)
+                status
+                ;;
+            5)
+                exit 0
+                ;;
+            *)
+                echo -e "${YELLOW}无效选择${RESET}"
+                ;;
+        esac
+    done
 }
 
+# ---------------------------
+# 启动
+# ---------------------------
 main_menu
