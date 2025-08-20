@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================
-# Microsocks 单账号自动安装版
+# Microsocks 单账号自动安装/二进制下载版
 # By: djkyc   鸣谢: eooce
 # 安装完成即启动并打印 SOCKS 链接
 # ===========================================
@@ -19,12 +19,10 @@ echo -e "${GREEN}
  By:djkyc 鸣谢:eooce 本脚本:microsocks
 ${RESET}"
 
-CONFIG_DIR="/etc/microsocks"
-CONFIG_FILE="${CONFIG_DIR}/user.conf"
-SERVICE_FILE="/etc/systemd/system/microsocks.service"
 PORT=1080
 USERNAME=""
 PASSWORD=""
+MICROBIN="/usr/local/bin/microsocks"
 
 # ---------------------------
 # 获取公网 IP
@@ -36,35 +34,48 @@ get_ip() {
 }
 
 # ---------------------------
-# 安装 microsocks
+# 安装或下载 microsocks
 # ---------------------------
 install_microsocks() {
-    if ! command -v microsocks >/dev/null 2>&1; then
-        echo "未检测到 microsocks，正在尝试安装..."
-        if command -v apt-get >/dev/null 2>&1; then
-            if ! apt-get install -y microsocks; then
-                echo "安装失败，尝试更新包源并修复依赖..."
-                apt-get update -y
-                apt --fix-broken install -y
-                apt-get install -y microsocks || { echo "自动安装失败，请手动安装 microsocks"; exit 1; }
-            fi
-        else
-            echo "当前系统不支持自动安装，请手动安装 microsocks"
-            exit 1
-        fi
-        echo "microsocks 安装完成"
+    if command -v microsocks >/dev/null 2>&1; then
+        MICROBIN="$(command -v microsocks)"
+        echo "已检测到 microsocks: $MICROBIN"
+        return
     fi
+
+    echo "未检测到 microsocks，尝试用 apt-get 安装..."
+    if command -v apt-get >/dev/null 2>&1; then
+        if ! apt-get install -y microsocks >/dev/null 2>&1; then
+            echo "apt 安装失败，尝试下载官方二进制..."
+            download_binary
+        else
+            MICROBIN="$(command -v microsocks)"
+        fi
+    else
+        download_binary
+    fi
+}
+
+download_binary() {
+    mkdir -p /usr/local/bin
+    echo "下载 microsocks 二进制到 $MICROBIN ..."
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) BIN_URL="https://github.com/rofl0r/microsocks/releases/download/0.5.1/microsocks-0.5.1-linux-x86_64" ;;
+        aarch64|arm64) BIN_URL="https://github.com/rofl0r/microsocks/releases/download/0.5.1/microsocks-0.5.1-linux-arm64" ;;
+        *) echo "未支持的架构 $ARCH"; exit 1 ;;
+    esac
+    curl -L -o "$MICROBIN" "$BIN_URL" || { echo "下载失败"; exit 1; }
+    chmod +x "$MICROBIN"
 }
 
 # ---------------------------
 # 配置账号
 # ---------------------------
 config_user() {
-    mkdir -p "$CONFIG_DIR"
     read -rp "请输入用户名: " USERNAME
     read -rp "请输入密码: " PASSWORD
-    echo "${USERNAME}:${PASSWORD}" > "$CONFIG_FILE"
-    echo "已保存账号到 $CONFIG_FILE"
+    echo "$USERNAME:$PASSWORD" > /etc/microsocks_user.conf
 }
 
 # ---------------------------
@@ -80,17 +91,17 @@ prompt_port() {
 }
 
 # ---------------------------
-# 生成 systemd 服务文件并启动
+# 创建 systemd 服务
 # ---------------------------
 create_service() {
-    USERS="-u $USERNAME -P $PASSWORD"
-    cat > "$SERVICE_FILE" <<EOF
+    mkdir -p /etc/systemd/system
+    cat > /etc/systemd/system/microsocks.service <<EOF
 [Unit]
 Description=Microsocks Socks5 Proxy
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/microsocks -i 0.0.0.0 -p ${PORT} ${USERS}
+ExecStart=$MICROBIN -i 0.0.0.0 -p $PORT -u $USERNAME -P $PASSWORD
 Restart=always
 User=nobody
 LimitNOFILE=65535
@@ -116,7 +127,7 @@ print_link() {
 }
 
 # ---------------------------
-# 执行安装
+# 执行流程
 # ---------------------------
 install_microsocks
 prompt_port
