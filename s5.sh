@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
 #
-# 简洁版 socks5 管理脚本（只保留 socks5 功能 + 卸载）
-# 介绍信息显示 djkyc
+# 交互式 socks5 管理脚本（安装 / 修改 / 卸载）
+# 要求：显示交互菜单（仅显示安装/卸载/修改），并尽量在各种内核/发行版上工作。
+# 说明：脚本会尝试使用系统已存在的 socks5 实现（3proxy、microsocks、s5、ss5、danted 等）。
+#    - 若系统无可用实现，会尝试使用常见包管理器安装 3proxy（静默尝试）。
+#    - 若安装失败，会下载备用二进制到工作目录并使用 JSON 配置运行（兼容原始 s5 二进制）。
+# 注意：脚本在通过管道执行（curl | bash）时也能交互（read 从 /dev/tty 读取）。
 #
-# 用法：
-#   ./s5_manager.sh            # 进入交互菜单
-#   ./s5_manager.sh install    # 交互式配置并安装启动
-#   ./s5_manager.sh start      # 启动（需已存在 config）
-#   ./s5_manager.sh stop       # 停止
-#   ./s5_manager.sh uninstall  # 停止并删除所有文件
+# 头部显示：djkyc
 #
 set -o errexit
 set -o nounset
 set -o pipefail
 
-# 输出颜色
+# 输出颜色（若终端不支持则仍然安全）
 GREEN="\e[32m"
 YELLOW="\e[33m"
 RED="\e[31m"
 RESET="\e[0m"
 
-# 头信息
 echo -e "${GREEN}
   ____   ___   ____ _  ______ ____  
  / ___| / _ \\ / ___| |/ / ___| ___|  
@@ -30,48 +28,164 @@ echo -e "${GREEN}
  djkyc
 ${RESET}"
 
-# 环境和路径
-USER="$(whoami)"
-HOME_DIR="${HOME:-/root}"
-FILE_PATH="${HOME_DIR}/.s5"
-S5_BIN="${FILE_PATH}/s5"
-CONFIG_JSON="${FILE_PATH}/config.json"
-META_FILE="${FILE_PATH}/meta"   # 存储端口/用户/密码用于展示
-PID_FILE="${FILE_PATH}/s5.pid"
+# 全局路径与文件
+WORKDIR="${HOME:-/root}/.s5_manager"
+PID_FILE="${WORKDIR}/s5.pid"
+META_FILE="${WORKDIR}/meta.env"
+CONFIG_S5="${WORKDIR}/config.json"
+CONFIG_3PROXY="${WORKDIR}/3proxy.cfg"
+FALLBACK_S5_URL="https://github.com/eooce/test/releases/download/freebsd/web"
+FALLBACK_S5_BIN="${WORKDIR}/s5_fallback"
+DEFAULT_PORT=1080
+DEFAULT_USER="s5user"
 
-# 原始二进制下载地址（保持原脚本来源）
-S5_DOWNLOAD_URL="https://github.com/eooce/test/releases/download/freebsd/web"
+# 兼容的实现名优先级
+PREFERRED_IMPLS=("s5" "3proxy" "microsocks" "ss5" "danted" "sockd")
 
-# 需要的命令
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || { echo -e "${RED}缺少命令：$1，请先安装。${RESET}"; exit 1; }
+# 确保工作目录存在
+ensure_workdir() {
+  mkdir -p "${WORKDIR}"
+  chmod 700 "${WORKDIR}"
 }
-require_cmd curl
-require_cmd pgrep
-require_cmd pkill
 
-# 生成配置（交互式）
-socks5_config() {
-  mkdir -p "${FILE_PATH}"
-  chmod 700 "${FILE_PATH}"
-
-  read -rp "请输入 socks5 端口号: " SOCKS5_PORT
-  if ! [[ "${SOCKS5_PORT}" =~ ^[0-9]+$ ]] || [ "${SOCKS5_PORT}" -lt 1 ] || [ "${SOCKS5_PORT}" -gt 65535 ]; then
-    echo -e "${RED}端口输入无效。${RESET}"; return 1
+# 从 meta.env 加载（若存在）
+load_meta() {
+  if [ -f "${META_FILE}" ]; then
+    # shellcheck disable=SC1090
+    source "${META_FILE}"
+  else
+    PORT=""
+    USERNAME=""
+    PASSWORD=""
+    BIN_TYPE=""
   fi
+}
 
-  read -rp "请输入 socks5 用户名: " SOCKS5_USER
-  while true; do
-    read -rp "请输入 socks5 密码（不能包含 @ 和 :）: " SOCKS5_PASS
-    echo
-    if [[ "${SOCKS5_PASS}" == *"@"* || "${SOCKS5_PASS}" == *":"* ]]; then
-      echo "密码中不能包含 @ 和 : 符号，请重新输入。"
-    else
-      break
-    fi
+# 保存 meta
+save_meta() {
+  cat > "${META_FILE}" <<EOF
+PORT='${PORT}'
+USERNAME='${USERNAME}'
+PASSWORD='${PASSWORD}'
+BIN_TYPE='${BIN_TYPE}'
+EOF
+  chmod 600 "${META_FILE}"
+}
+
+# 安全地从终端读取（支持 curl | bash 场景）
+prompt() {
+  local prompt_text="$1"
+  local default="${2:-}"
+  local varname="$3"
+  local input
+  if [ -n "${default}" ]; then
+    # shellcheck disable=SC2034
+    printf "%s [%s]: " "${prompt_text}" "${default}" > /dev/tty
+  else
+    printf "%s: " "${prompt_text}" > /dev/tty
+  fi
+  read -r input < /dev/tty || input=""
+  if [ -z "${input}" ]; then
+    input="${default}"
+  fi
+  printf -v "${varname}" "%s" "${input}"
+}
+
+# 简单随机密码生成
+random_pass() {
+  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12 || echo "s5pass123"
+}
+
+# 检测系统中已有实现（按优先级）
+detect_existing_impl() {
+  for impl in "${PREFERRED_IMPLS[@]}"; do
+    case "${impl}" in
+      s5)
+        if command -v s5 >/dev/null 2>&1 || [ -f "${FALLBACK_S5_BIN}" ]; then
+          echo "s5"
+          return 0
+        fi
+        ;;
+      3proxy)
+        if command -v 3proxy >/dev/null 2>&1; then
+          echo "3proxy"
+          return 0
+        fi
+        ;;
+      microsocks)
+        if command -v microsocks >/dev/null 2>&1; then
+          echo "microsocks"
+          return 0
+        fi
+        ;;
+      ss5)
+        if command -v ss5 >/dev/null 2>&1; then
+          echo "ss5"
+          return 0
+        fi
+        ;;
+      danted|sockd)
+        if command -v sockd >/dev/null 2>&1 || command -v danted >/dev/null 2>&1; then
+          echo "danted"
+          return 0
+        fi
+        ;;
+    esac
   done
+  # 没有发现
+  echo ""
+}
 
-  cat > "${CONFIG_JSON}" <<EOF
+# 尝试使用系统包管理器安装 3proxy（静默尝试）
+try_install_3proxy() {
+  echo "尝试通过包管理器安装 3proxy（若 root 权限且仓库可用）..."
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y && apt-get install -y 3proxy && return 0 || return 1
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y 3proxy && return 0 || return 1
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y 3proxy && return 0 || return 1
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache 3proxy && return 0 || return 1
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm 3proxy && return 0 || return 1
+  elif command -v pkg >/dev/null 2>&1; then
+    pkg install -y 3proxy && return 0 || return 1
+  fi
+  return 1
+}
+
+# 下载备用 s5 二进制到 WORKDIR（最后手段）
+download_fallback_s5() {
+  echo "下载备用 s5 二进制到 ${FALLBACK_S5_BIN} ..."
+  curl -L -sS -o "${FALLBACK_S5_BIN}" "${FALLBACK_S5_URL}" || return 1
+  chmod 700 "${FALLBACK_S5_BIN}"
+  return 0
+}
+
+# 生成 3proxy 配置
+generate_3proxy_cfg() {
+  local port="$1" user="$2" pass="$3" cfg="${CONFIG_3PROXY}"
+  cat > "${cfg}" <<EOF
+# 3proxy config (generated)
+daemon
+maxconn 100
+nserver 8.8.8.8
+nserver 8.8.4.4
+timeouts 1 5 30 60 180 1800 15 60
+users ${user}:CL:${pass}
+auth strong
+allow ${user}
+socks -p${port}
+EOF
+  chmod 600 "${cfg}"
+  echo "${cfg}"
+}
+
+# 生成 s5 JSON config
+generate_s5_json() {
+  local port="$1" user="$2" pass="$3" cfg="${CONFIG_S5}"
+  cat > "${cfg}" <<EOF
 {
   "log": {
     "access": "/dev/null",
@@ -80,7 +194,7 @@ socks5_config() {
   },
   "inbounds": [
     {
-      "port": ${SOCKS5_PORT},
+      "port": ${port},
       "protocol": "socks",
       "tag": "socks",
       "settings": {
@@ -90,8 +204,8 @@ socks5_config() {
         "userLevel": 0,
         "accounts": [
           {
-            "user": "${SOCKS5_USER}",
-            "pass": "${SOCKS5_PASS}"
+            "user": "${user}",
+            "pass": "${pass}"
           }
         ]
       }
@@ -105,193 +219,232 @@ socks5_config() {
   ]
 }
 EOF
-
-  chmod 600 "${CONFIG_JSON}"
-  # 保存元数据便于展示（权限 600）
-  {
-    echo "PORT=${SOCKS5_PORT}"
-    echo "USER=${SOCKS5_USER}"
-    echo "PASS=${SOCKS5_PASS}"
-  } > "${META_FILE}"
-  chmod 600 "${META_FILE}"
-
-  echo "配置已写入：${CONFIG_JSON}"
+  chmod 600 "${cfg}"
+  echo "${cfg}"
 }
 
-# 下载并安装二进制（不会盲目修改已有文件，提供覆盖选项）
-install_s5_bin() {
-  mkdir -p "${FILE_PATH}"
-  chmod 700 "${FILE_PATH}"
-
-  if [ -f "${S5_BIN}" ]; then
-    read -rp "检测到 s5 可执行文件已存在，是否覆盖下载？(Y/N 回车N): " ans
-    ans="${ans^^}"
-    if [ "${ans}" != "Y" ]; then
-      echo "保留已存在的可执行文件。"
-      chmod 700 "${S5_BIN}" || true
-      return 0
-    fi
-    # 尝试停止正在运行的实例（若有）
-    if [ -f "${PID_FILE}" ]; then
-      pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-      if [ -n "${pid}" ] && ps -p "${pid}" >/dev/null 2>&1; then
-        echo "检测到 s5 正在运行 (PID ${pid})，将尝试停止..."
-        pkill -x "s5" || true
-        sleep 1
-      fi
-    fi
-  fi
-
-  echo "正在下载 s5 二进制到 ${S5_BIN} ..."
-  curl -L -sS -o "${S5_BIN}" "${S5_DOWNLOAD_URL}" || { echo -e "${RED}下载失败${RESET}"; return 1; }
-  chmod 700 "${S5_BIN}"
-  echo "下载并安装完成。"
-}
-
-# 启动 s5（将 pid 写入 PID_FILE）
-start_s5() {
-  if [ ! -f "${S5_BIN}" ]; then
-    echo -e "${YELLOW}未找到可执行文件 ${S5_BIN}，请先安装。${RESET}"
-    return 1
-  fi
-  if [ ! -f "${CONFIG_JSON}" ]; then
-    echo -e "${YELLOW}未找到配置 ${CONFIG_JSON}，请先运行 install 或 config。${RESET}"
-    return 1
-  fi
-
-  # 如果已有 pid 且进程存在，提示并退出
-  if [ -f "${PID_FILE}" ]; then
-    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [ -n "${pid}" ] && ps -p "${pid}" >/dev/null 2>&1; then
-      echo "s5 已在运行 (PID ${pid})。"
-      return 0
-    else
-      rm -f "${PID_FILE}" || true
-    fi
-  fi
-
-  nohup "${S5_BIN}" -c "${CONFIG_JSON}" >/dev/null 2>&1 &
-  s5_pid=$!
-  echo "${s5_pid}" > "${PID_FILE}"
-  sleep 2
-
-  if ps -p "${s5_pid}" >/dev/null 2>&1; then
-    echo -e "${GREEN}s5 已启动，PID=${s5_pid}${RESET}"
-    # 尝试用 meta 文件显示 socks URL；无 meta 则显示本地地址
-    if [ -f "${META_FILE}" ]; then
-      # shellcheck disable=SC1090
-      source "${META_FILE}"
-      CURL_OUTPUT="$(curl -s --max-time 5 4.ipw.cn --socks5 "${USER}:${PASS}@127.0.0.1:${PORT}" || true)"
-      if [[ "${CURL_OUTPUT}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        SERV_DOMAIN="${CURL_OUTPUT}"
+# 启动代理（根据 BIN_TYPE）
+start_by_type() {
+  local type="$1"
+  case "${type}" in
+    3proxy)
+      cfg="$(generate_3proxy_cfg "${PORT}" "${USERNAME}" "${PASSWORD}")"
+      nohup 3proxy "${cfg}" >/dev/null 2>&1 &
+      echo "$!" > "${PID_FILE}"
+      ;;
+    s5)
+      # 优先使用系统 s5（若存在），否则使用下载的 fallback
+      if command -v s5 >/dev/null 2>&1; then
+        BIN_PATH="$(command -v s5)"
+        generate_s5_json "${PORT}" "${USERNAME}" "${PASSWORD}" >/dev/null
+        nohup "${BIN_PATH}" -c "${CONFIG_S5}" >/dev/null 2>&1 &
+        echo "$!" > "${PID_FILE}"
       else
-        SERV_DOMAIN="127.0.0.1"
+        generate_s5_json "${PORT}" "${USERNAME}" "${PASSWORD}" >/dev/null
+        nohup "${FALLBACK_S5_BIN}" -c "${CONFIG_S5}" >/dev/null 2>&1 &
+        echo "$!" > "${PID_FILE}"
       fi
-      echo "socks URL: socks://${USER}:${PASS}@${SERV_DOMAIN}:${PORT}"
-    else
-      echo "未找到 meta 信息，socks 在本机监听，请使用 127.0.0.1:<port>"
-    fi
+      ;;
+    microsocks)
+      # microsocks 启动：microsocks -p PORT -u USER -P PASS
+      nohup microsocks -p "${PORT}" -u "${USERNAME}" -P "${PASSWORD}" >/dev/null 2>&1 &
+      echo "$!" > "${PID_FILE}"
+      ;;
+    ss5)
+      # ss5 的启动参数可能依实现不同；此处尽力尝试简单方式（若失败，请手动启动）
+      nohup ss5 -u "${USERNAME}:${PASSWORD}" -p "${PORT}" >/dev/null 2>&1 &
+      echo "$!" > "${PID_FILE}"
+      ;;
+    danted)
+      echo -e "${YELLOW}检测到 danted/sockd，脚本不会自动生成完整服务配置。请手动配置并启动 danted。${RESET}"
+      return 1
+      ;;
+    *)
+      echo -e "${RED}未知实现类型：${type}${RESET}"
+      return 1
+      ;;
+  esac
+
+  sleep 1
+  if [ -f "${PID_FILE}" ] && kill -0 "$(cat "${PID_FILE}")" >/dev/null 2>&1; then
+    echo -e "${GREEN}已启动 ${type}，PID=$(cat "${PID_FILE}")${RESET}"
     return 0
   else
-    echo -e "${RED}s5 启动失败。${RESET}"
+    echo -e "${RED}启动失败（查看日志或手动启动）。${RESET}"
     return 1
   fi
 }
 
-# 停止 s5
-stop_s5() {
-  stopped=0
+# 停止运行代理（PID 文件优先）
+stop_socks() {
   if [ -f "${PID_FILE}" ]; then
-    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [ -n "${pid}" ] && ps -p "${pid}" >/dev/null 2>&1; then
-      pkill -x "s5" || true
+    pid="$(cat "${PID_FILE}")"
+    if kill "${pid}" >/dev/null 2>&1; then
+      echo "正在停止 PID ${pid} ..."
       sleep 1
-      if ! ps -p "${pid}" >/dev/null 2>&1; then
-        echo "s5 (PID ${pid}) 已停止。"
-        rm -f "${PID_FILE}" || true
-        stopped=1
-      fi
-    else
       rm -f "${PID_FILE}" || true
     fi
   fi
-
-  # 兜底：通过进程名停止
-  if pgrep -x "s5" >/dev/null 2>&1; then
-    pkill -x "s5" || true
-    echo "通过进程名尝试停止 s5。"
-    stopped=1
-  fi
-
-  if [ "${stopped}" -eq 0 ]; then
-    echo "未检测到运行的 s5。"
-  fi
+  # 兜底按常见进程名停止
+  for p in s5 3proxy microsocks ss5 danted sockd; do
+    if pgrep -x "${p}" >/dev/null 2>&1; then
+      pkill -x "${p}" || true
+    fi
+  done
 }
 
-# 卸载：停止并删除所有文件
-uninstall_s5() {
-  echo -e "${YELLOW}警告：卸载会停止 s5 并删除目录 ${FILE_PATH} 下的所有文件。此操作不可恢复。${RESET}"
-  read -rp "确认卸载并删除所有文件？(请输入 Y 以确认): " confirm
-  confirm="${confirm^^}"
-  if [ "${confirm}" != "Y" ]; then
+# 安装流程（交互）
+install_flow() {
+  ensure_workdir
+  echo "安装/配置 socks5（交互）"
+  # 询问端口/用户/密码（从终端读取）
+  prompt "监听端口" "${DEFAULT_PORT}" PORT
+  # 简单校验端口为数字范围
+  if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
+    echo "端口输入无效，使用默认 ${DEFAULT_PORT}"
+    PORT="${DEFAULT_PORT}"
+  fi
+  prompt "用户名" "${DEFAULT_USER}" USERNAME
+  prompt "密码（留空则自动生成）" "" PASSWORD
+  if [ -z "${PASSWORD}" ]; then
+    PASSWORD="$(random_pass)"
+    echo "已生成密码：${PASSWORD}"
+  fi
+
+  # 检测已有实现
+  EXIST="$(detect_existing_impl || true)"
+  if [ -n "${EXIST}" ]; then
+    echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
+    BIN_TYPE="${EXIST}"
+  else
+    echo "未检测到受支持的 socks5 实现，尝试安装 3proxy ..."
+    if try_install_3proxy; then
+      if command -v 3proxy >/dev/null 2>&1; then
+        BIN_TYPE="3proxy"
+        echo "已安装 3proxy"
+      fi
+    fi
+  fi
+
+  # 若仍未选择实现，尝试下载备用 s5
+  if [ -z "${BIN_TYPE}" ]; then
+    if download_fallback_s5; then
+      BIN_TYPE="s5"
+      echo "使用下载的备用 s5 二进制（已保存到 ${FALLBACK_S5_BIN}）"
+    else
+      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 3proxy/danted/microsocks，或检查网络。${RESET}"
+      return 1
+    fi
+  fi
+
+  save_meta
+  start_by_type "${BIN_TYPE}" || { echo "启动失败"; return 1; }
+  echo -e "${GREEN}安装并启动完成。socks 地址示例：socks://${USERNAME}:${PASSWORD}@<your-ip>:${PORT}${RESET}"
+  return 0
+}
+
+# 修改流程（交互）
+modify_flow() {
+  ensure_workdir
+  load_meta
+  if [ -z "${BIN_TYPE}" ]; then
+    EXIST="$(detect_existing_impl || true)"
+    BIN_TYPE="${EXIST:-}"
+  fi
+  if [ -z "${BIN_TYPE}" ]; then
+    echo -e "${YELLOW}未检测到现有安装。请先运行 安装。${RESET}"
+    return 1
+  fi
+
+  echo "修改 socks5 配置（当前实现：${BIN_TYPE}）"
+  prompt "新的监听端口（回车保留当前: ${PORT:-unset})" "${PORT:-${DEFAULT_PORT}}" NEW_PORT
+  if ! [[ "${NEW_PORT}" =~ ^[0-9]+$ ]] || [ "${NEW_PORT}" -lt 1 ] || [ "${NEW_PORT}" -gt 65535 ]; then
+    echo "端口无效，保留原值"
+    NEW_PORT="${PORT}"
+  fi
+  prompt "新的用户名（回车保留当前: ${USERNAME:-unset})" "${USERNAME:-${DEFAULT_USER}}" NEW_USER
+  prompt "新的密码（留空则自动生成）" "" NEW_PASS
+  if [ -z "${NEW_PASS}" ]; then
+    NEW_PASS="$(random_pass)"
+    echo "已生成新密码：${NEW_PASS}"
+  fi
+
+  PORT="${NEW_PORT}"
+  USERNAME="${NEW_USER}"
+  PASSWORD="${NEW_PASS}"
+
+  save_meta
+  echo "正在重启代理以应用修改..."
+  stop_socks
+  start_by_type "${BIN_TYPE}" || { echo "重启失败，请检查日志"; return 1; }
+  echo -e "${GREEN}修改并重启完成。socks://${USERNAME}:${PASSWORD}@<your-ip>:${PORT}${RESET}"
+  return 0
+}
+
+# 卸载流程（交互）
+uninstall_flow() {
+  ensure_workdir
+  echo -e "${YELLOW}卸载将停止代理并删除目录：${WORKDIR}。此操作不可恢复。${RESET}"
+  prompt "确认卸载并删除所有文件？输入 Y 确认" "N" CONFIRM
+  if [ "${CONFIRM}" != "Y" ]; then
     echo "已取消卸载。"
     return 0
   fi
+  stop_socks
+  rm -rf "${WORKDIR}" && echo "已删除 ${WORKDIR}" || echo "删除 ${WORKDIR} 时出错或该目录不存在。"
+  return 0
+}
 
-  stop_s5 || true
-
-  if [ -d "${FILE_PATH}" ]; then
-    rm -rf "${FILE_PATH}" && echo "已删除目录 ${FILE_PATH}"
+# 状态显示（简短）
+status_flow() {
+  ensure_workdir
+  load_meta
+  if [ -f "${PID_FILE}" ]; then
+    pid="$(cat "${PID_FILE}")"
+    if kill -0 "${pid}" >/dev/null 2>&1; then
+      echo -e "${GREEN}socks5 正在运行，PID=${pid}${RESET}"
+    else
+      echo -e "${YELLOW}PID 文件存在但进程未运行。${RESET}"
+    fi
   else
-    echo "目录 ${FILE_PATH} 不存在，跳过删除。"
+    if pgrep -x s5 >/dev/null 2>&1 || pgrep -x 3proxy >/dev/null 2>&1; then
+      echo -e "${GREEN}检测到 socks5 相关进程在运行（但无 PID 文件）。${RESET}"
+    else
+      echo -e "${YELLOW}未检测到 socks5 运行。${RESET}"
+    fi
   fi
-  echo "卸载完成。"
+  if [ -f "${META_FILE}" ]; then
+    echo "当前配置："
+    sed -n '1,3p' "${META_FILE}" || true
+  else
+    echo "未找到配置（meta）。"
+  fi
 }
 
-# 简单交互菜单
-show_menu() {
-  echo
-  echo "选择操作："
-  echo "1) 安装/配置并启动 socks5"
-  echo "2) 启动 socks5"
-  echo "3) 停止 socks5"
-  echo "4) 卸载 socks5（停止并删除）"
-  echo "5) 退出"
-  read -rp "请选择 (1-5): " opt
-  case "${opt}" in
-    1)
-      socks5_config
-      install_s5_bin
-      start_s5
-      ;;
-    2) start_s5 ;;
-    3) stop_s5 ;;
-    4) uninstall_s5 ;;
-    5) echo "退出。"; exit 0 ;;
-    *) echo "无效选项。" ;;
-  esac
+# 主交互菜单（只显示：安装 / 修改 / 卸载）
+main_menu() {
+  while true; do
+    echo
+    echo "请选择操作："
+    echo "1) 安装 socks5"
+    echo "2) 修改 socks5 配置"
+    echo "3) 卸载 socks5"
+    echo "4) 状态"
+    echo "5) 退出"
+    # 读入来自 /dev/tty，确保 curl|bash 场景也能交互
+    read -r -p "请选择 (1-5): " opt < /dev/tty || opt="5"
+    case "${opt}" in
+      1) install_flow ;;
+      2) modify_flow ;;
+      3) uninstall_flow ;;
+      4) status_flow ;;
+      5) echo "退出。"; exit 0 ;;
+      *) echo "无效选项。" ;;
+    esac
+  done
 }
 
-# 参数模式
-if [ "$#" -gt 0 ]; then
-  case "$1" in
-    install)
-      socks5_config
-      install_s5_bin
-      start_s5
-      exit 0
-      ;;
-    start) start_s5; exit 0 ;;
-    stop) stop_s5; exit 0 ;;
-    uninstall) uninstall_s5; exit 0 ;;
-    *)
-      echo "未知参数。支持：install | start | stop | uninstall"
-      exit 1
-      ;;
-  esac
-fi
-
-# 进入交互循环
-while true; do
-  show_menu
-done
+# 启动
+ensure_workdir
+load_meta
+main_menu
