@@ -21,7 +21,7 @@ echo -e "${GREEN}
  \\___ \\| | | | |   | ' /\\___ \\___ \\ 
   ___) | |_| | |___| . \\ ___) |__) |           
  |____/ \\___/ \\____|_|\\_\\____/____/  没有售后   
- djkyc
+ By:djkyc 用:microsocks 鸣谢:eooce
 ${RESET}"
 
 WORKDIR="${HOME:-/root}/.s5_manager"
