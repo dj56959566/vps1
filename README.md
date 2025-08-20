@@ -10,6 +10,8 @@ curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh | bash
 
 本项目提供一个适用于主流 VPS 系统（CentOS、Ubuntu、Debian）的 Socks5 代理一键安装脚本。无需复杂配置，
 
+适合在 内存和资源有限的设备（比如路由器、VPS、小型服务器）上运行
+
 一条命令即可完成安装与启动，并支持自定义端口、用户名与密码，自动生成 t.me 格式分享链接，方便管理和分发。
 
 
