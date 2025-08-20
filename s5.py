@@ -1,107 +1,94 @@
-#!/usr/bin/env python3
-import os
-import sys
-import subprocess
-import random
-import socket
+#!/bin/bash
+# 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)
+# 用法: curl -sSL https://yourdomain.com/socks5_install.sh | bash
 
-def get_local_ip():
-    try:
-        # Get the local IP address
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+set -e
 
-def random_str(length=6):
-    return ''.join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=length))
+# 检查 root
+if [[ $EUID -ne 0 ]]; then
+  echo "请用 root 权限运行此脚本。" >&2
+  exit 1
+fi
 
-def input_with_default(prompt, 默认):
-    v = input(f"{prompt} (默认: {default}): ")
-    return v.strip() or default
+# 检查 python3
+if ! command -v python3 &>/dev/null; then
+  echo "正在安装 Python3..."
+  if command -v apt-get &>/dev/null; then
+    apt-get update
+    apt-get install -y python3 python3-pip
+  elif command -v yum &>/dev/null; then
+    yum install -y python3 python3-pip
+  elif command -v dnf &>/dev/null; then
+    dnf install -y python3 python3-pip
+  else
+    echo "未检测到包管理器，请自行安装 Python3 和 pip3。" >&2
+    exit 1
+  fi
+fi
 
-def install_socks5(ip, port, user, passwd):
-    # 安装依赖
-    os.system("pip install --quiet --upgrade pip")
-    os.system("pip install --quiet python-socks5")
-    # 写配置文件
-    config = f"""
+# 检查 pip3
+if ! command -v pip3 &>/dev/null; then
+  echo "正在安装 pip3..."
+  if command -v apt-get &>/dev/null; then
+    apt-get install -y python3-pip
+  elif command -v yum &>/dev/null; then
+    yum install -y python3-pip
+  elif command -v dnf &>/dev/null; then
+    dnf install -y python3-pip
+  else
+    echo "未检测到包管理器，请自行安装 pip3。" >&2
+    exit 1
+  fi
+fi
+
+# 生成默认参数
+default_port=$((10000 + RANDOM % 50000))
+default_user="user$(date +%s | tail -c 5)"
+default_pass="pass$(openssl rand -hex 3)"
+
+read -p "请输入端口 [默认:${default_port}]: " port
+port=${port:-$default_port}
+read -p "请输入用户名 [默认:${default_user}]: " user
+user=${user:-$default_user}
+read -p "请输入密码 [默认:${default_pass}]: " pass
+pass=${pass:-$default_pass}
+
+# 安装 python-socks5
+pip3 install --upgrade pip
+pip3 install python-socks5
+
+# 写入 socks5 服务
+cat >/usr/local/socks5_server.py <<EOF
 from python_socks5.server import Socks5Server
 
 def main():
     server = Socks5Server(
-        listen_host='{ip}',
-        listen_port={port},
-        username='{user}',
-        password='{passwd}'
+        listen_host='0.0.0.0',
+        listen_port=${port},
+        username='${user}',
+        password='${pass}'
     )
     server.serve_forever()
 
 if __name__ == '__main__':
     main()
-"""
-    with open("/usr/local/socks5_server.py", "w") as f:
-        f.write(config)
-    # 创建服务脚本
-    with open("/usr/local/socks5_start.sh", "w") as f:
-        f.write("#!/bin/bash\nnohup python3 /usr/local/socks5_server.py &\n")
-    os.system("chmod +x /usr/local/socks5_start.sh")
-    # 启动服务
-    os.system("/usr/local/socks5_start.sh")
-    print("Socks5安装并启动成功！")
+EOF
 
-def uninstall_socks5():
-    os.system("pkill -f socks5_server.py")
-    os.system("rm -f /usr/local/socks5_server.py /usr/local/socks5_start.sh")
-    print("Socks5已卸载！")
+cat >/usr/local/socks5_start.sh <<EOF
+#!/bin/bash
+nohup python3 /usr/local/socks5_server.py &>/tmp/socks5.log &
+EOF
+chmod +x /usr/local/socks5_start.sh
 
-def modify_socks5():
-    print("修改Socks5参数：")
-    ip = get_local_ip()
-    port = input_with_default("输入端口"， str(random.randint(10000, 20000)))
-    user = input_with_default("输入用户名"， random_str())
-    passwd = input_with_default("输入密码"， random_str())
-    uninstall_socks5()
-    install_socks5(ip, port, user, passwd)
-    print_result(ip, port, user, passwd)
+# 启动 socks5
+pkill -f socks5_server.py || true
+bash /usr/local/socks5_start.sh
 
-def print_result(ip, port, user, passwd):
-    print(f"服务器IP:{ip} 端口:{port} 用户:{user} 密码:{passwd} https://t.me/socks?server={ip}&port={port}&user={user}&pass={passwd}")
+# 获取服务器 IP
+server_ip=$(curl -s https://api.ip.sb/ip || hostname -I | awk '{print $1}')
 
-def main_menu():
-    ip = get_local_ip()
-    port = str(random.randint(10000, 20000))
-    user = random_str()
-    passwd = random_str()
-    while True:
-        print("\n=== Socks5 管理脚本 ===")
-        print("1. 安装 Socks5")
-        print("2. 卸载 Socks5")
-        print("3. 修改参数")
-        print("0. 退出")
-        choice = input("请选择功能[1/2/3/0]: ").strip()
-        if choice == "1":
-            print("请输入参数，可回车自动生成默认值：")
-            port_in = input_with_default("输入端口", port)
-            user_in = input_with_default("输入用户名", user)
-            passwd_in = input_with_default("输入密码", passwd)
-            install_socks5(ip, port_in, user_in, passwd_in)
-            print_result(ip, port_in, user_in, passwd_in)
-        elif choice == "2":
-            uninstall_socks5()
-        elif choice == "3":
-            modify_socks5()
-        elif choice == "0":
-            print("退出。")
-            sys.exit(0)
-        else:
-            print("无效选择，请重试。")
-
-if __name__ == "__main__":
-    if os.geteuid() != 0:
-        print("请用root权限运行此脚本。")
-        sys.exit(1)
-    main_menu()
+echo ""
+echo "安装完成！"
+echo "服务器IP:${server_ip} 端口:${port} 用户:${user} 密码:${pass} https://t.me/socks?server=${server_ip}&port=${port}&user=${user}&pass=${pass}"
+echo "卸载命令: pkill -f socks5_server.py; rm -f /usr/local/socks5_server.py /usr/local/socks5_start.sh"
+echo "修改参数：请重新运行本脚本"
