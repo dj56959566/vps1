@@ -1,7 +1,7 @@
 #!/bin/bash
 # 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)
-# By:djkyc
-# Date: 2025-08-20 09:03:49
+# By:dj56959566
+# Date: 2025-08-20 09:10:59
 
 # 检查 root
 if [[ $EUID -ne 0 ]]; then
@@ -20,6 +20,57 @@ pause() {
     read -p "按回车键继续..." key
 }
 
+# 显示菜单
+show_menu() {
+    clear_screen
+    echo "------------------------"
+    echo "Socks5 管理脚本"
+    echo "------------------------"
+    echo "1. 安装 Socks5"
+    echo "2. 卸载 Socks5"
+    echo "3. 修改配置"
+    echo "4. 退出"
+    echo "------------------------"
+}
+
+# 配置函数
+configure_socks() {
+    clear_screen
+    echo "------------------------"
+    echo "Socks5 配置设置"
+    echo "------------------------"
+    
+    # 生成默认值
+    default_port=$((10000 + RANDOM % 50000))
+    default_user="user$(date +%s | tail -c 5)"
+    default_pass="pass$(openssl rand -hex 3)"
+    
+    echo "请设置 Socks5 信息（直接回车使用随机值）："
+    echo "------------------------"
+    read -p "请输入端口 [默认:${default_port}]: " input_port
+    read -p "请输入用户名 [默认:${default_user}]: " input_user
+    read -p "请输入密码 [默认:${default_pass}]: " input_pass
+    
+    # 设置最终使用的值
+    PORT="${input_port:-$default_port}"
+    USER="${input_user:-$default_user}"
+    PASS="${input_pass:-$default_pass}"
+    
+    echo "------------------------"
+    echo "已设置以下配置："
+    echo "端口: ${PORT}"
+    echo "用户名: ${USER}"
+    echo "密码: ${PASS}"
+    echo "------------------------"
+    read -p "确认配置正确吗？(y/n): " confirm
+    
+    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+        echo "取消安装"
+        return 1
+    fi
+    return 0
+}
+
 # 安装依赖函数
 install_deps() {
     clear_screen
@@ -35,7 +86,7 @@ install_deps() {
         dnf install -y git curl
     else
         echo "未检测到包管理器，请自行安装编译工具和git。"
-        exit 1
+        return 1
     fi
 
     echo "正在下载和编译 microsocks..."
@@ -47,41 +98,16 @@ install_deps() {
     cd /
     rm -rf /tmp/microsocks
     echo "依赖安装完成！"
-}
-
-# 显示菜单
-show_menu() {
-    clear_screen
-    echo "------------------------"
-    echo "Socks5 管理脚本"
-    echo "------------------------"
-    echo "1. 安装 Socks5"
-    echo "2. 卸载 Socks5"
-    echo "3. 修改配置"
-    echo "4. 退出"
-    echo "------------------------"
+    return 0
 }
 
 # 安装 Socks5 函数
 install_socks5() {
-    clear_screen
-    echo "------------------------"
-    echo "Socks5 安装配置"
-    echo "------------------------"
-    echo "请选择配置方式:"
-    echo "1. 自定义配置"
-    echo "2. 随机配置（直接回车）"
-    read -p "请选择 [1-2]: " config_choice
-
-    if [ "$config_choice" = "1" ]; then
-        read -p "请输入端口 (1024-65535): " PORT
-        read -p "请输入用户名: " USER
-        read -p "请输入密码: " PASS
-    else
-        PORT=$((10000 + RANDOM % 50000))
-        USER="user$(date +%s | tail -c 5)"
-        PASS="pass$(openssl rand -hex 3)"
-    fi
+    # 先进行配置
+    configure_socks || return 1
+    
+    # 然后安装依赖
+    install_deps || return 1
 
     # 创建 systemd 服务
     cat >/etc/systemd/system/microsocks.service <<EOF
@@ -190,11 +216,6 @@ modify_config() {
         esac
     done
 }
-
-# 检查是否已安装依赖
-if ! command -v microsocks &>/dev/null; then
-    install_deps
-fi
 
 # 主循环
 while true; do
