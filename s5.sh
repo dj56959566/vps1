@@ -15,12 +15,15 @@ default_port=$((10000 + RANDOM % 50000))
 default_user="user$(date +%s | tail -c 5)"
 default_pass="pass$(openssl rand -hex 3)"
 
-read -p "请输入端口 [默认:${default_port}]: " port
-port=${port:-$default_port}
-read -p "请输入用户名 [默认:${default_user}]: " user
-user=${user:-$default_user}
-read -p "请输入密码 [默认:${default_pass}]: " pass
-pass=${pass:-$default_pass}
+echo "按回车键使用随机值，或输入自定义值："
+read -p "请输入端口 [默认:${default_port}]: " input_port
+read -p "请输入用户名 [默认:${default_user}]: " input_user
+read -p "请输入密码 [默认:${default_pass}]: " input_pass
+
+# 设置最终使用的值
+PORT="${input_port:-$default_port}"
+USER="${input_user:-$default_user}"
+PASS="${input_pass:-$default_pass}"
 
 # 安装依赖
 echo "正在安装依赖..."
@@ -55,7 +58,7 @@ Description=MicroSocks Proxy Server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/microsocks -i 0.0.0.0 -p ${port} -u ${user} -P ${pass}
+ExecStart=/usr/local/bin/microsocks -i 0.0.0.0 -p ${PORT} -u ${USER} -P ${PASS}
 Restart=always
 
 [Install]
@@ -68,7 +71,7 @@ systemctl enable microsocks
 systemctl start microsocks
 
 # 获取服务器 IP (使用多个备选方案)
-server_ip=$(curl -s -4 ip.sb || curl -s -4 ifconfig.me || curl -s -4 api.ipify.org || hostname -I | awk '{print $1}')
+SERVER_IP=$(curl -s -4 ip.sb || curl -s -4 ifconfig.me || curl -s -4 api.ipify.org || hostname -I | awk '{print $1}')
 
 # 清理临时文件
 cd /
@@ -77,19 +80,24 @@ rm -rf /tmp/microsocks
 # 保存配置到文件
 cat >/root/socks5_info.txt <<EOF
 服务器信息：
-IP: ${server_ip}
-端口: ${port}
-用户名: ${user}
-密码: ${pass}
+IP: ${SERVER_IP}
+端口: ${PORT}
+用户名: ${USER}
+密码: ${PASS}
 
 Telegram一键链接:
-https://t.me/socks?server=${server_ip}&port=${port}&user=${user}&pass=${pass}
+https://t.me/socks?server=${SERVER_IP}&port=${PORT}&user=${USER}&pass=${PASS}
 
 管理命令：
 启动: systemctl start microsocks
 停止: systemctl stop microsocks
 状态: systemctl status microsocks
-卸载: systemctl stop microsocks; systemctl disable microsocks; rm -f /usr/local/bin/microsocks /etc/systemd/system/microsocks.service
+重启: systemctl restart microsocks
+
+卸载命令: 
+systemctl stop microsocks
+systemctl disable microsocks
+rm -f /usr/local/bin/microsocks /etc/systemd/system/microsocks.service
 
 配置文件位置：
 systemd服务: /etc/systemd/system/microsocks.service
@@ -97,14 +105,19 @@ EOF
 
 echo ""
 echo "安装完成！"
-echo "服务器IP: ${server_ip}"
-echo "端口: ${port}"
-echo "用户名: ${user}"
-echo "密码: ${pass}"
+echo "------------------------"
+echo "服务器IP: ${SERVER_IP}"
+echo "端口: ${PORT}"
+echo "用户名: ${USER}"
+echo "密码: ${PASS}"
+echo "------------------------"
 echo ""
 echo "Telegram一键链接:"
-echo "https://t.me/socks?server=${server_ip}&port=${port}&user=${user}&pass=${pass}"
+echo "https://t.me/socks?server=${SERVER_IP}&port=${PORT}&user=${USER}&pass=${PASS}"
 echo ""
 echo "详细信息已保存到: /root/socks5_info.txt"
-echo "卸载命令: systemctl stop microsocks; systemctl disable microsocks; rm -f /usr/local/bin/microsocks /etc/systemd/system/microsocks.service"
-echo "修改参数：请重新运行本脚本"
+echo ""
+echo "提示："
+echo "1. 直接按回车将使用随机端口和随机用户名密码"
+echo "2. 要修改配置请重新运行此脚本"
+echo "3. 使用 systemctl status microsocks 查看服务状态"
