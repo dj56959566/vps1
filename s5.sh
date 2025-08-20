@@ -1,6 +1,6 @@
 #!/bin/bash
-# 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)
-# 用法: curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh | bash
+# 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)By:Djkyc
+
 
 set -e
 
