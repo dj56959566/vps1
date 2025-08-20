@@ -1,6 +1,6 @@
 #!/bin/bash
 # 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)
-# 用法: curl -sSL https://yourdomain.com/socks5_install.sh | bash
+# 用法: curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh | bash
 
 set -e
 
@@ -53,9 +53,9 @@ user=${user:-$default_user}
 read -p "请输入密码 [默认:${default_pass}]: " pass
 pass=${pass:-$default_pass}
 
-# 安装 python-socks5
-pip3 install --upgrade pip
-pip3 install python-socks5
+# 安装 python-socks5（兼容PEP 668新规范）
+pip3 install --upgrade pip --break-system-packages
+pip3 install python-socks5 --break-system-packages
 
 # 写入 socks5 服务
 cat >/usr/local/socks5_server.py <<EOF
