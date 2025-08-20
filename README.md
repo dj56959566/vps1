@@ -3,7 +3,7 @@
 **一键安装：**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh | bash
+curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/refs/heads/main/s5.py| bash
 ```
 
 -------------------------------------------------------------------------------------
