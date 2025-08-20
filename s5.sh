@@ -1,6 +1,7 @@
 #!/bin/bash
 # 一键安装 Socks5，支持主流 VPS 系统 (CentOS, Ubuntu, Debian)
-# By:Djkyc, Modified to use microsocks
+# By:dj56959566
+# Date: 2025-08-20
 
 set -e
 
@@ -9,21 +10,6 @@ if [[ $EUID -ne 0 ]]; then
   echo "请用 root 权限运行此脚本。" >&2
   exit 1
 fi
-
-# 生成默认参数
-default_port=$((10000 + RANDOM % 50000))
-default_user="user$(date +%s | tail -c 5)"
-default_pass="pass$(openssl rand -hex 3)"
-
-echo "按回车键使用随机值，或输入自定义值："
-read -p "请输入端口 [默认:${default_port}]: " input_port
-read -p "请输入用户名 [默认:${default_user}]: " input_user
-read -p "请输入密码 [默认:${default_pass}]: " input_pass
-
-# 设置最终使用的值
-PORT="${input_port:-$default_port}"
-USER="${input_user:-$default_user}"
-PASS="${input_pass:-$default_pass}"
 
 # 安装依赖
 echo "正在安装依赖..."
@@ -47,9 +33,26 @@ cd /tmp
 git clone https://github.com/rofl0r/microsocks.git
 cd microsocks
 make
-
-# 安装 microsocks
 install -m755 microsocks /usr/local/bin/
+
+# 生成默认参数
+default_port=$((10000 + RANDOM % 50000))
+default_user="user$(date +%s | tail -c 5)"
+default_pass="pass$(openssl rand -hex 3)"
+
+echo ""
+echo "------------------------"
+echo "请配置您的Socks5服务器："
+echo "（直接按回车将使用随机值）"
+echo "------------------------"
+read -p "请输入端口 [默认:${default_port}]: " input_port
+read -p "请输入用户名 [默认:${default_user}]: " input_user
+read -p "请输入密码 [默认:${default_pass}]: " input_pass
+
+# 设置最终使用的值
+PORT="${input_port:-$default_port}"
+USER="${input_user:-$default_user}"
+PASS="${input_pass:-$default_pass}"
 
 # 创建 systemd 服务
 cat >/etc/systemd/system/microsocks.service <<EOF
@@ -70,7 +73,7 @@ systemctl daemon-reload
 systemctl enable microsocks
 systemctl start microsocks
 
-# 获取服务器 IP (使用多个备选方案)
+# 获取服务器 IP
 SERVER_IP=$(curl -s -4 ip.sb || curl -s -4 ifconfig.me || curl -s -4 api.ipify.org || hostname -I | awk '{print $1}')
 
 # 清理临时文件
@@ -93,14 +96,6 @@ https://t.me/socks?server=${SERVER_IP}&port=${PORT}&user=${USER}&pass=${PASS}
 停止: systemctl stop microsocks
 状态: systemctl status microsocks
 重启: systemctl restart microsocks
-
-卸载命令: 
-systemctl stop microsocks
-systemctl disable microsocks
-rm -f /usr/local/bin/microsocks /etc/systemd/system/microsocks.service
-
-配置文件位置：
-systemd服务: /etc/systemd/system/microsocks.service
 EOF
 
 echo ""
@@ -115,9 +110,6 @@ echo ""
 echo "Telegram一键链接:"
 echo "https://t.me/socks?server=${SERVER_IP}&port=${PORT}&user=${USER}&pass=${PASS}"
 echo ""
-echo "详细信息已保存到: /root/socks5_info.txt"
-echo ""
-echo "提示："
-echo "1. 直接按回车将使用随机端口和随机用户名密码"
-echo "2. 要修改配置请重新运行此脚本"
-echo "3. 使用 systemctl status microsocks 查看服务状态"
+echo "配置信息已保存到: /root/socks5_info.txt"
+echo "提示: 使用 systemctl status microsocks 查看服务状态"
+
