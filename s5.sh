@@ -21,7 +21,7 @@ echo -e "${GREEN}
  \\___ \\| | | | |   | ' /\\___ \\___ \\ 
   ___) | |_| | |___| . \\ ___) |__) |           
  |____/ \\___/ \\____|_|\\_\\____/____/  没有售后   
- Djkyc 鸣谢:eooce 本脚本用:microsocks编写
+ djkyc
 ${RESET}"
 
 WORKDIR="${HOME:-/root}/.s5_manager"
@@ -65,7 +65,7 @@ EOF
 
 prompt() {
   local prompt_text="$1"
-  local 默认="${2:-}"
+  local default="${2:-}"
   local varname="$3"
   local input
   if [ -n "${default}" ]; then
