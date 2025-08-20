@@ -6,6 +6,14 @@ YELLOW="\e[33m"
 RED="\e[31m"
 RESET="\e[0m"
 
+WORKDIR="/etc/microsocks"
+BIN_PATH="${WORKDIR}/microsocks"
+SERVICE_FILE="/etc/systemd/system/microsocks.service"
+USERS_FILE="${WORKDIR}/users.conf"
+DEFAULT_PORT=1080
+
+mkdir -p "$WORKDIR"
+
 echo -e "${GREEN}
   ____   ___   ____ _  ______ ____  
  / ___| / _ \\ / ___| |/ / ___| ___|  
@@ -14,14 +22,6 @@ echo -e "${GREEN}
  |____/ \\___/ \\____|_|\\_\\____/____/            
  By:djkyc 鸣谢:eooce 本脚本:microsocks
 ${RESET}"
-
-WORKDIR="/etc/microsocks"
-BIN_PATH="${WORKDIR}/microsocks"
-SERVICE_FILE="/etc/systemd/system/microsocks.service"
-USERS_FILE="${WORKDIR}/users.conf"
-DEFAULT_PORT=1080
-
-mkdir -p "$WORKDIR"
 
 prompt() {
   local prompt_text="$1"
@@ -34,7 +34,6 @@ prompt() {
   echo "$var"
 }
 
-# 获取公网 IP
 get_ip() {
   for svc in "https://icanhazip.com" "https://ifconfig.me" "https://ipinfo.io/ip" "https://4.ipw.cn"; do
     ip=$(curl -s --max-time 5 "$svc" || true)
@@ -47,7 +46,6 @@ get_ip() {
   echo "127.0.0.1"
 }
 
-# URL encode
 urlencode() {
   local s="$1"
   python3 -c "import urllib.parse; print(urllib.parse.quote('''$s'''))" 2>/dev/null || echo "$s"
@@ -99,22 +97,65 @@ EOF
   systemctl restart microsocks
 }
 
-main() {
-  install_microsocks
+show_links() {
+  if [ -f "$USERS_FILE" ]; then
+    PORT=$(grep -oP '(?<=-p )\d+' "$SERVICE_FILE" || echo "$DEFAULT_PORT")
+    USER=$(cut -d':' -f1 "$USERS_FILE")
+    PASS=$(cut -d':' -f2 "$USERS_FILE")
+    IP=$(get_ip)
+    SOCKS="socks://$USER:$PASS@$IP:$PORT"
+    TLINK="https://t.me/socks?server=$(urlencode $IP)&port=$PORT&user=$(urlencode $USER)&pass=$(urlencode $PASS)"
+    echo "SOCKS 链接: $SOCKS"
+    echo "Telegram 快链: $TLINK"
+  else
+    echo -e "${YELLOW}未检测到用户配置${RESET}"
+  fi
+}
 
+uninstall() {
+  systemctl stop microsocks 2>/dev/null || true
+  systemctl disable microsocks 2>/dev/null || true
+  rm -f "$BIN_PATH" "$SERVICE_FILE" "$USERS_FILE"
+  systemctl daemon-reload
+  echo -e "${GREEN}microsocks 已卸载${RESET}"
+}
+
+modify_config() {
   PORT=$(prompt "请输入监听端口" "$DEFAULT_PORT")
   USERNAME=$(prompt "请输入用户名" "admin")
   PASSWORD=$(prompt "请输入密码" "admin")
-
   setup_service "$PORT" "$USERNAME" "$PASSWORD"
-
-  IP=$(get_ip)
-  SOCKS="socks://$USERNAME:$PASSWORD@$IP:$PORT"
-  TLINK="https://t.me/socks?server=$(urlencode $IP)&port=$PORT&user=$(urlencode $USERNAME)&pass=$(urlencode $PASSWORD)"
-
-  echo -e "${GREEN}microsocks 已启动并设置开机自启${RESET}"
-  echo "SOCKS 链接: $SOCKS"
-  echo "Telegram 快链: $TLINK"
+  echo -e "${GREEN}配置已更新并重启服务${RESET}"
+  show_links
 }
 
-main
+while true; do
+  echo -e "\n请选择操作:"
+  echo "1) 安装/重新安装 microsocks"
+  echo "2) 修改配置"
+  echo "3) 卸载 microsocks"
+  echo "4) 状态 (含 SOCKS 链接)"
+  echo "5) 退出"
+  read -rp "请选择 (1-5): " CHOICE
+  case "$CHOICE" 在
+    1)
+      install_microsocks
+      modify_config
+      ;;
+    2)
+      modify_config
+      ;;
+    3)
+      uninstall
+      ;;
+    4)
+      show_links
+      ;;
+    5)
+      exit 0
+      ;;
+    *)
+      echo -e "${RED}无效选择${RESET}"
+      ;;
+  esac
+done
