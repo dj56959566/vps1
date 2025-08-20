@@ -1,8 +1,8 @@
 #!/bin/bash
 # ===========================================
-# Socks5 Proxy Manager - Microsocks Enhanced
+# Microsocks 单账号自动安装版
 # By: djkyc   鸣谢: eooce
-# 本脚本: microsocks 专用版本，支持多账号
+# 安装完成即启动并打印 SOCKS 链接
 # ===========================================
 
 GREEN="\033[32m"
@@ -20,9 +20,11 @@ echo -e "${GREEN}
 ${RESET}"
 
 CONFIG_DIR="/etc/microsocks"
-CONFIG_FILE="${CONFIG_DIR}/users.conf"
+CONFIG_FILE="${CONFIG_DIR}/user.conf"
 SERVICE_FILE="/etc/systemd/system/microsocks.service"
 PORT=1080
+USERNAME=""
+PASSWORD=""
 
 # ---------------------------
 # 获取公网 IP
@@ -34,43 +36,54 @@ get_ip() {
 }
 
 # ---------------------------
-# 自动安装 microsocks
+# 安装 microsocks
 # ---------------------------
 install_microsocks() {
     if ! command -v microsocks >/dev/null 2>&1; then
-        echo "未检测到 microsocks，正在安装..."
+        echo "未检测到 microsocks，正在尝试安装..."
         if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y && apt-get install -y microsocks
-        elif command -v yum >/dev/null 2>&1; then
-            yum install -y epel-release
-            yum install -y microsocks
+            if ! apt-get install -y microsocks; then
+                echo "安装失败，尝试更新包源并修复依赖..."
+                apt-get update -y
+                apt --fix-broken install -y
+                apt-get install -y microsocks || { echo "自动安装失败，请手动安装 microsocks"; exit 1; }
+            fi
         else
-            echo "不支持的系统，请手动安装 microsocks"
+            echo "当前系统不支持自动安装，请手动安装 microsocks"
             exit 1
         fi
+        echo "microsocks 安装完成"
     fi
 }
 
 # ---------------------------
-# 配置用户（多账号）
+# 配置账号
 # ---------------------------
-config_users() {
+config_user() {
     mkdir -p "$CONFIG_DIR"
-    echo "# 格式: user:pass (一行一个)" > "$CONFIG_FILE"
-    while true; do
-        read -rp "请输入用户名 (留空结束): " user
-        [ -z "$user" ] && break
-        read -rp "请输入密码: " pass
-        echo "${user}:${pass}" >> "$CONFIG_FILE"
-    done
-    echo "已保存到 $CONFIG_FILE"
+    read -rp "请输入用户名: " USERNAME
+    read -rp "请输入密码: " PASSWORD
+    echo "${USERNAME}:${PASSWORD}" > "$CONFIG_FILE"
+    echo "已保存账号到 $CONFIG_FILE"
 }
 
 # ---------------------------
-# 生成 systemd 服务文件
+# 提示端口
+# ---------------------------
+prompt_port() {
+    read -rp "请输入监听端口 (默认1080): " port_input
+    if [[ -n "$port_input" && "$port_input" =~ ^[0-9]+$ && "$port_input" -ge 1 && "$port_input" -le 65535 ]]; then
+        PORT=$port_input
+    else
+        echo "使用默认端口 $PORT"
+    fi
+}
+
+# ---------------------------
+# 生成 systemd 服务文件并启动
 # ---------------------------
 create_service() {
-    USERS=$(awk -F: '{print "-u "$1" -P "$2}' "$CONFIG_FILE" | xargs)
+    USERS="-u $USERNAME -P $PASSWORD"
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Microsocks Socks5 Proxy
@@ -85,105 +98,28 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
+
     systemctl daemon-reload
     systemctl enable --now microsocks
     echo "microsocks 已安装并设置开机自启"
 }
 
 # ---------------------------
-# 修改配置
+# 打印 SOCKS 链接
 # ---------------------------
-modify_config() {
-    echo "当前端口: ${PORT}"
-    read -rp "请输入新端口(回车保持默认): " newport
-    [ -n "$newport" ] && PORT=$newport
-    config_users
-    create_service
-    systemctl restart microsocks
-    echo "配置已更新并重启"
-    print_links
-}
-
-# ---------------------------
-# 卸载
-# ---------------------------
-uninstall() {
-    systemctl stop microsocks
-    systemctl disable microsocks
-    rm -f "$SERVICE_FILE"
-    rm -rf "$CONFIG_DIR"
-    systemctl daemon-reload
-    echo "microsocks 已卸载"
-}
-
-# ---------------------------
-# 状态 & 生成 socks 链接
-# ---------------------------
-status() {
-    systemctl status microsocks --no-pager
-    echo
-    echo "监听端口: ${PORT}"
-    echo "账号列表:"
-    cat "$CONFIG_FILE"
-    print_links
-}
-
-# ---------------------------
-# 打印 socks 链接（多账号 + 公网 IP）
-# ---------------------------
-print_links() {
+print_link() {
     IP=$(get_ip)
-    echo -e "\n${GREEN}=== SOCKS5 一键链接 ===${RESET}"
-    while IFS=: read -r USER PASS; do
-        [[ -z "$USER" || "$USER" =~ ^# ]] && continue
-        echo "账号: ${USER} / 密码: ${PASS}"
-        echo "socks://$USER:$PASS@$IP:$PORT"
-        echo "https://t.me/socks?server=$IP&port=$PORT&user=$USER&pass=$PASS"
-        echo "----------------------------------"
-    done < "$CONFIG_FILE"
+    echo -e "\n${GREEN}=== SOCKS5 链接 ===${RESET}"
+    echo "账号: ${USERNAME} / 密码: ${PASSWORD}"
+    echo "socks://$USERNAME:$PASSWORD@$IP:$PORT"
+    echo "Telegram 快链: https://t.me/socks?server=$IP&port=$PORT&user=$USERNAME&pass=$PASSWORD"
 }
 
 # ---------------------------
-# 主菜单
+# 执行安装
 # ---------------------------
-main_menu() {
-    while true; do
-        echo -e "
-请选择操作:
-1) 安装 socks5
-2) 修改 socks5 配置
-3) 卸载 socks5
-4) 状态 (含 socks 链接)
-5) 退出
-"
-        read -rp "请选择 (1-5): " choice
-        case "$choice" in
-            1)
-                install_microsocks
-                config_users
-                create_service
-                print_links
-                ;;
-            2)
-                modify_config
-                ;;
-            3)
-                uninstall
-                ;;
-            4)
-                status
-                ;;
-            5)
-                exit 0
-                ;;
-            *)
-                echo -e "${YELLOW}无效选择${RESET}"
-                ;;
-        esac
-    done
-}
-
-# ---------------------------
-# 启动
-# ---------------------------
-main_menu
+install_microsocks
+prompt_port
+config_user
+create_service
+print_link
