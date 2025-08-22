@@ -125,7 +125,7 @@ install_cloudflared() {
     
     # 根据系统架构下载对应版本
     ARCH=$(uname -m)
-    case $ARCH 在
+    case $ARCH in
         x86_64)
             ARCH="amd64"
             ;;
