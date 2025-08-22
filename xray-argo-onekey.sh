@@ -421,6 +421,10 @@ show_connection_info() {
             echo -e "${GREEN}路径: /vmess${PLAIN}"
             echo -e "${GREEN}Argo域名: $5${PLAIN}"
             ;;
+        "Shadowsocks-2022")
+            echo -e "${GREEN}密码: $4${PLAIN}"
+            echo -e "${GREEN}加密方式: 2022-blake3-aes-128-gcm${PLAIN}"
+            ;;
     esac
     
     echo -e "${GREEN}===============================${PLAIN}"
@@ -497,9 +501,89 @@ EOF
 }
 EOF
             ;;
+        "Shadowsocks-2022")
+            PASSWORD=$4
+            cat > ${config_file} << EOF
+{
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "proxy",
+      "server": "${server_ip}",
+      "server_port": ${port},
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "${PASSWORD}"
+    }
+  ]
+}
+EOF
+            ;;
     esac
     
     echo -e "${GREEN}客户端配置已生成: ${config_file}${PLAIN}"
+}
+
+# 安装Shadowsocks-2022
+install_ss2022() {
+    # 检查系统环境
+    check_root
+    check_system
+    install_base
+    get_ip
+    
+    # 安装Xray
+    install_xray
+    
+    # 配置Xray
+    XRAY_CONFIG=$(configure_xray)
+    PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
+    
+    # 配置Shadowsocks-2022
+    PASSWORD=$(configure_ss2022 $PORT)
+    
+    # 显示连接信息
+    show_connection_info "Shadowsocks-2022" $IP $PORT $PASSWORD
+    
+    # 生成客户端配置
+    generate_client_config "Shadowsocks-2022" $IP $PORT $PASSWORD
+}
+
+# 配置Shadowsocks-2022
+configure_ss2022() {
+    echo -e "${GREEN}开始配置Shadowsocks-2022...${PLAIN}"
+    
+    # 获取参数
+    PORT=$1
+    
+    # 生成随机密码
+    PASSWORD=$(openssl rand -base64 16)
+    
+    # 配置Xray
+    cat > /tmp/ss2022.json << EOF
+{
+  "inbounds": [
+    {
+      "port": ${PORT},
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "${PASSWORD}",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}
+EOF
+    
+    # 合并配置
+    ${SUDO} jq -s '.[0].inbounds += .[1].inbounds | .[0]' /usr/local/etc/xray/config.json /tmp/ss2022.json > /tmp/merged_config.json
+    ${SUDO} mv /tmp/merged_config.json /usr/local/etc/xray/config.json
+    
+    # 重启Xray服务
+    ${SUDO} systemctl restart xray
+    
+    # 返回配置信息
+    echo "$PASSWORD"
 }
 
 # 主菜单
@@ -512,11 +596,12 @@ show_menu() {
   ${GREEN}0.${PLAIN} 退出脚本
   ${GREEN}1.${PLAIN} 安装 VLESS+Reality+Vision
   ${GREEN}2.${PLAIN} 安装 VMess+WebSocket+Argo
-  ${GREEN}3.${PLAIN} 安装 WARP全局出站
-  ${GREEN}4.${PLAIN} 重置所有配置
+  ${GREEN}3.${PLAIN} 安装 Shadowsocks-2022
+  ${GREEN}4.${PLAIN} 安装 WARP全局出站
+  ${GREEN}5.${PLAIN} 重置所有配置
   ————————————————————————————————————
   "
-    echo && read -p "请输入选择 [0-4]: " num
+    echo && read -p "请输入选择 [0-5]: " num
     case "${num}" in
         0) exit 0
         ;;
@@ -524,11 +609,13 @@ show_menu() {
         ;;
         2) install_vmess_ws_argo
         ;;
-        3) install_warp
+        3) install_ss2022
         ;;
-        4) reset_all
+        4) install_warp
         ;;
-        *) echo -e "${RED}请输入正确的数字 [0-4]${PLAIN}"
+        5) reset_all
+        ;;
+        *) echo -e "${RED}请输入正确的数字 [0-5]${PLAIN}"
         ;;
     esac
 }
