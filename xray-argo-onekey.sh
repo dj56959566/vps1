@@ -191,13 +191,37 @@ generate_port() {
     echo $(shuf -i 10000-65535 -n 1)
 }
 
+# 获取用户输入的端口或使用随机端口
+get_port() {
+    local random_port=$(generate_port)
+    echo -e "${GREEN}请输入端口号 [1-65535]，回车将使用随机端口 ${random_port}:${PLAIN}"
+    read -p "" input_port
+    
+    if [[ -z "$input_port" ]]; then
+        echo $random_port
+    else
+        if ! [[ "$input_port" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}错误: 端口号必须是数字，将使用随机端口 ${random_port}${PLAIN}"
+            echo $random_port
+        elif [ "$input_port" -lt 1 ] || [ "$input_port" -gt 65535 ]; then
+            echo -e "${RED}错误: 端口号必须在1-65535之间，将使用随机端口 ${random_port}${PLAIN}"
+            echo $random_port
+        else
+            echo $input_port
+        fi
+    fi
+}
+
 # 配置Xray
 configure_xray() {
     echo -e "${GREEN}开始配置Xray...${PLAIN}"
     
     # 生成随机参数
     UUID=$(generate_uuid)
-    PORT=$(generate_port)
+    PORT=$(get_port)
+    
+    # 验证端口号
+    validate_port $PORT
     
     # 创建配置目录
     ${SUDO} mkdir -p /usr/local/etc/xray
@@ -419,12 +443,13 @@ generate_link() {
             # 生成VMess配置JSON
             local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WebSocket-Argo\",\"add\":\"${ARGO_HOST}\",\"port\":443,\"id\":\"${UUID}\",\"aid\":0,\"net\":\"ws\",\"type\":\"none\",\"host\":\"${ARGO_HOST}\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"${ARGO_HOST}\"}"
             # Base64编码
-            echo "vmess://$(echo $vmess_config | base64 -w 0)"
+            echo "vmess://$(echo -n $vmess_config | base64 | tr -d '\n')"
             ;;
         "Shadowsocks-2022")
             PASSWORD=$4
-            # 使用URL安全的Base64编码
-            local userinfo=$(echo -n "2022-blake3-aes-128-gcm:${PASSWORD}" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+            # 使用标准Base64编码
+            local method_password="2022-blake3-aes-128-gcm:${PASSWORD}"
+            local userinfo=$(echo -n "${method_password}" | base64 | tr -d '\n')
             echo "ss://${userinfo}@${server_ip}:${port}#Shadowsocks-2022"
             ;;
     esac
@@ -458,7 +483,7 @@ show_connection_info() {
     esac
     
     # 生成并显示节点链接
-    echo -e "\n${GREEN}节点链接:${PLAIN}"
+    echo -e "\n${GREEN}V2rayN/Shadowrocket等客户端链接:${PLAIN}"
     local link=""
     case $1 in
         "VLESS+Reality+Vision")
@@ -475,6 +500,176 @@ show_connection_info() {
     
     echo -e "\n${GREEN}===============================${PLAIN}"
     echo -e "${GREEN}By: djkyc    $(date +%Y-%m-%d)${PLAIN}"
+    
+    echo -e "\n${GREEN}已生成以下配置文件:${PLAIN}"
+    case $1 in
+        "VLESS+Reality+Vision")
+            echo -e "${YELLOW}1. client_VLESS+Reality+Vision_config.json - 适用于Xray等客户端${PLAIN}"
+            echo -e "${YELLOW}2. clash_VLESS+Reality+Vision_config.yaml - 适用于Clash客户端${PLAIN}"
+            ;;
+        "VMess+WebSocket")
+            echo -e "${YELLOW}1. client_VMess+WebSocket_config.json - 适用于Xray等客户端${PLAIN}"
+            echo -e "${YELLOW}2. clash_VMess+WebSocket_config.yaml - 适用于Clash客户端${PLAIN}"
+            ;;
+        "Shadowsocks-2022")
+            echo -e "${YELLOW}1. client_Shadowsocks-2022_config.json - 适用于Xray等客户端${PLAIN}"
+            echo -e "${YELLOW}2. clash_Shadowsocks-2022_config.yaml - 适用于Clash客户端${PLAIN}"
+            ;;
+    esac
+    
+    echo -e "\n${GREEN}使用说明:${PLAIN}"
+    echo -e "${YELLOW}1. V2rayN/Shadowrocket等客户端: 直接复制上方链接导入${PLAIN}"
+    echo -e "${YELLOW}2. Clash客户端: 使用clash_*.yaml配置文件导入${PLAIN}"
+    echo -e "${YELLOW}3. 其他客户端: 使用client_*.json配置文件导入${PLAIN}"
+}
+
+# 生成Clash配置
+generate_clash_config() {
+    local protocol=$1
+    local server_ip=$2
+    local port=$3
+    local clash_file="clash_${protocol// /_}_config.yaml"
+    
+    # 创建基础Clash配置
+    cat > ${clash_file} << EOF
+port: 7890
+socks-port: 7891
+allow-lan: true
+mode: Rule
+log-level: info
+external-controller: 127.0.0.1:9090
+proxies:
+EOF
+    
+    # 根据协议添加不同的代理配置
+    case $protocol in
+        "VLESS+Reality+Vision")
+            UUID=$4
+            PUBLIC_KEY=$5
+            SHORT_ID=$6
+            cat >> ${clash_file} << EOF
+  - name: VLESS-Reality-Vision
+    type: vless
+    server: ${server_ip}
+    port: ${port}
+    uuid: ${UUID}
+    network: tcp
+    tls: true
+    udp: true
+    flow: xtls-rprx-vision
+    servername: www.microsoft.com
+    reality-opts:
+      public-key: ${PUBLIC_KEY}
+      short-id: ${SHORT_ID}
+    client-fingerprint: chrome
+EOF
+            ;;
+        "VMess+WebSocket")
+            UUID=$4
+            ARGO_HOST=$5
+            cat >> ${clash_file} << EOF
+  - name: VMess-WebSocket-Argo
+    type: vmess
+    server: ${ARGO_HOST}
+    port: 443
+    uuid: ${UUID}
+    alterId: 0
+    cipher: auto
+    udp: true
+    tls: true
+    network: ws
+    ws-opts:
+      path: /vmess
+      headers:
+        Host: ${ARGO_HOST}
+    servername: ${ARGO_HOST}
+EOF
+            ;;
+        "Shadowsocks-2022")
+            PASSWORD=$4
+            cat >> ${clash_file} << EOF
+  - name: Shadowsocks-2022
+    type: ss
+    server: ${server_ip}
+    port: ${port}
+    cipher: 2022-blake3-aes-128-gcm
+    password: ${PASSWORD}
+    udp: true
+EOF
+            ;;
+    esac
+    
+    # 添加代理组和规则
+    cat >> ${clash_file} << EOF
+
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies:
+      - 自动选择
+      - DIRECT
+EOF
+    
+    # 添加对应的代理名称
+    case $protocol in
+        "VLESS+Reality+Vision")
+            echo "      - VLESS-Reality-Vision" >> ${clash_file}
+            ;;
+        "VMess+WebSocket")
+            echo "      - VMess-WebSocket-Argo" >> ${clash_file}
+            ;;
+        "Shadowsocks-2022")
+            echo "      - Shadowsocks-2022" >> ${clash_file}
+            ;;
+    esac
+    
+    # 继续添加其他代理组和规则
+    cat >> ${clash_file} << EOF
+  - name: 自动选择
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+EOF
+    
+    # 添加对应的代理名称
+    case $protocol in
+        "VLESS+Reality+Vision")
+            echo "      - VLESS-Reality-Vision" >> ${clash_file}
+            ;;
+        "VMess+WebSocket")
+            echo "      - VMess-WebSocket-Argo" >> ${clash_file}
+            ;;
+        "Shadowsocks-2022")
+            echo "      - Shadowsocks-2022" >> ${clash_file}
+            ;;
+    esac
+    
+    # 添加规则
+    cat >> ${clash_file} << EOF
+rules:
+  - DOMAIN-SUFFIX,google.com,🚀 节点选择
+  - DOMAIN-SUFFIX,facebook.com,🚀 节点选择
+  - DOMAIN-SUFFIX,youtube.com,🚀 节点选择
+  - DOMAIN-SUFFIX,netflix.com,🚀 节点选择
+  - DOMAIN-SUFFIX,spotify.com,🚀 节点选择
+  - DOMAIN-SUFFIX,telegram.org,🚀 节点选择
+  - DOMAIN-KEYWORD,google,🚀 节点选择
+  - DOMAIN-KEYWORD,facebook,🚀 节点选择
+  - DOMAIN-KEYWORD,youtube,🚀 节点选择
+  - DOMAIN-KEYWORD,twitter,🚀 节点选择
+  - DOMAIN-KEYWORD,instagram,🚀 节点选择
+  - DOMAIN-KEYWORD,telegram,🚀 节点选择
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,🚀 节点选择
+EOF
+    
+    echo -e "${GREEN}Clash配置已生成: ${clash_file}${PLAIN}"
 }
 
 # 生成客户端配置
@@ -482,7 +677,7 @@ generate_client_config() {
     local protocol=$1
     local server_ip=$2
     local port=$3
-    local config_file="client_${protocol}_config.json"
+    local config_file="client_${protocol// /_}_config.json"
     
     case $protocol in
         "VLESS+Reality+Vision")
@@ -567,6 +762,9 @@ EOF
     esac
     
     echo -e "${GREEN}客户端配置已生成: ${config_file}${PLAIN}"
+    
+    # 同时生成Clash配置
+    generate_clash_config "$protocol" "$server_ip" "$port" "$4" "$5" "$6"
 }
 
 # 安装Shadowsocks-2022
@@ -582,6 +780,7 @@ install_ss2022() {
     
     # 配置Xray
     XRAY_CONFIG=$(configure_xray)
+    UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
     
     # 配置Shadowsocks-2022
@@ -629,7 +828,7 @@ EOF
     ${SUDO} systemctl restart xray
     
     # 返回配置信息
-    echo "$PASSWORD"
+    echo "${PASSWORD}"
 }
 
 # 主菜单
