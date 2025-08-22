@@ -125,7 +125,7 @@ install_cloudflared() {
     
     # 根据系统架构下载对应版本
     ARCH=$(uname -m)
-    case $ARCH in
+    case $ARCH 在
         x86_64)
             ARCH="amd64"
             ;;
@@ -430,25 +430,31 @@ generate_link() {
     local server_ip=$2
     local port=$3
     
+    # 确保参数是数字
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "错误: 端口号必须是数字"
+        return 1
+    fi
+    
     case $protocol in
         "VLESS+Reality+Vision")
-            UUID=$4
-            PUBLIC_KEY=$5
-            SHORT_ID=$6
-            echo "vless://${UUID}@${server_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none#VLESS-Reality-Vision"
+            local uuid=$4
+            local public_key=$5
+            local short_id=$6
+            echo "vless://${uuid}@${server_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#VLESS-Reality-Vision"
             ;;
         "VMess+WebSocket")
-            UUID=$4
-            ARGO_HOST=$5
+            local uuid=$4
+            local argo_host=$5
             # 生成VMess配置JSON
-            local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WebSocket-Argo\",\"add\":\"${ARGO_HOST}\",\"port\":443,\"id\":\"${UUID}\",\"aid\":0,\"net\":\"ws\",\"type\":\"none\",\"host\":\"${ARGO_HOST}\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"${ARGO_HOST}\"}"
+            local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WebSocket-Argo\",\"add\":\"${argo_host}\",\"port\":443,\"id\":\"${uuid}\",\"aid\":0,\"net\":\"ws\",\"type\":\"none\",\"host\":\"${argo_host}\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"${argo_host}\"}"
             # Base64编码
-            echo "vmess://$(echo -n $vmess_config | base64 | tr -d '\n')"
+            echo "vmess://$(echo -n "$vmess_config" | base64 | tr -d '\n')"
             ;;
         "Shadowsocks-2022")
-            PASSWORD=$4
+            local password=$4
             # 使用标准Base64编码
-            local method_password="2022-blake3-aes-128-gcm:${PASSWORD}"
+            local method_password="2022-blake3-aes-128-gcm:${password}"
             local userinfo=$(echo -n "${method_password}" | base64 | tr -d '\n')
             echo "ss://${userinfo}@${server_ip}:${port}#Shadowsocks-2022"
             ;;
@@ -501,25 +507,11 @@ show_connection_info() {
     echo -e "\n${GREEN}===============================${PLAIN}"
     echo -e "${GREEN}By: djkyc    $(date +%Y-%m-%d)${PLAIN}"
     
-    echo -e "\n${GREEN}已生成以下配置文件:${PLAIN}"
-    case $1 in
-        "VLESS+Reality+Vision")
-            echo -e "${YELLOW}1. client_VLESS+Reality+Vision_config.json - 适用于Xray等客户端${PLAIN}"
-            echo -e "${YELLOW}2. clash_VLESS+Reality+Vision_config.yaml - 适用于Clash客户端${PLAIN}"
-            ;;
-        "VMess+WebSocket")
-            echo -e "${YELLOW}1. client_VMess+WebSocket_config.json - 适用于Xray等客户端${PLAIN}"
-            echo -e "${YELLOW}2. clash_VMess+WebSocket_config.yaml - 适用于Clash客户端${PLAIN}"
-            ;;
-        "Shadowsocks-2022")
-            echo -e "${YELLOW}1. client_Shadowsocks-2022_config.json - 适用于Xray等客户端${PLAIN}"
-            echo -e "${YELLOW}2. clash_Shadowsocks-2022_config.yaml - 适用于Clash客户端${PLAIN}"
-            ;;
-    esac
     
     echo -e "\n${GREEN}使用说明:${PLAIN}"
     echo -e "${YELLOW}1. V2rayN/Shadowrocket等客户端: 直接复制上方链接导入${PLAIN}"
     echo -e "${YELLOW}2. Clash客户端: 使用clash_*.yaml配置文件导入${PLAIN}"
+    echo -e "${YELLOW}   要创建Clash订阅链接，可将配置文件上传至GitHub或使用订阅转换服务${PLAIN}"
     echo -e "${YELLOW}3. 其他客户端: 使用client_*.json配置文件导入${PLAIN}"
 }
 
@@ -669,7 +661,7 @@ rules:
   - MATCH,🚀 节点选择
 EOF
     
-    echo -e "${GREEN}Clash配置已生成: ${clash_file}${PLAIN}"
+    # 不显示生成提示信息
 }
 
 # 生成客户端配置
@@ -761,9 +753,7 @@ EOF
             ;;
     esac
     
-    echo -e "${GREEN}客户端配置已生成: ${config_file}${PLAIN}"
-    
-    # 同时生成Clash配置
+    # 同时生成Clash配置，但不显示提示信息
     generate_clash_config "$protocol" "$server_ip" "$port" "$4" "$5" "$6"
 }
 
@@ -778,10 +768,19 @@ install_ss2022() {
     # 安装Xray
     install_xray
     
+    # 提示用户输入端口
+    echo -e "${GREEN}开始安装 Shadowsocks-2022...${PLAIN}"
+    
     # 配置Xray
     XRAY_CONFIG=$(configure_xray)
     UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
+    
+    # 验证端口号
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
+        PORT=443
+    fi
     
     # 配置Shadowsocks-2022
     PASSWORD=$(configure_ss2022 $PORT)
@@ -791,6 +790,9 @@ install_ss2022() {
     
     # 生成客户端配置
     generate_client_config "Shadowsocks-2022" $IP $PORT $PASSWORD
+    
+    # 生成HTML配置页面
+    generate_html_page "Shadowsocks-2022" $IP $PORT $PASSWORD
 }
 
 # 配置Shadowsocks-2022
@@ -879,10 +881,19 @@ install_vless_reality_vision() {
     # 安装Xray
     install_xray
     
+    # 提示用户输入端口
+    echo -e "${GREEN}开始安装 VLESS+Reality+Vision...${PLAIN}"
+    
     # 配置Xray
     XRAY_CONFIG=$(configure_xray)
     UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
+    
+    # 验证端口号
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
+        PORT=443
+    fi
     
     # 配置VLESS+Reality+Vision
     REALITY_CONFIG=$(configure_vless_reality_vision $UUID $PORT)
@@ -894,6 +905,9 @@ install_vless_reality_vision() {
     
     # 生成客户端配置
     generate_client_config "VLESS+Reality+Vision" $IP $PORT $UUID $PUBLIC_KEY $SHORT_ID
+    
+    # 生成HTML配置页面
+    generate_html_page "VLESS+Reality+Vision" $IP $PORT $UUID $PUBLIC_KEY $SHORT_ID
 }
 
 # 安装VMess+WebSocket+Argo
@@ -908,10 +922,19 @@ install_vmess_ws_argo() {
     install_xray
     install_cloudflared
     
+    # 提示用户输入端口
+    echo -e "${GREEN}开始安装 VMess+WebSocket+Argo...${PLAIN}"
+    
     # 配置Xray
     XRAY_CONFIG=$(configure_xray)
     UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
+    
+    # 验证端口号
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
+        PORT=443
+    fi
     
     # 配置Argo隧道
     ARGO_DOMAIN=$(configure_argo $PORT)
@@ -924,6 +947,9 @@ install_vmess_ws_argo() {
     
     # 生成客户端配置
     generate_client_config "VMess+WebSocket" $IP $PORT $UUID $ARGO_HOST
+    
+    # 生成HTML配置页面
+    generate_html_page "VMess+WebSocket" $IP $PORT $UUID $ARGO_HOST
 }
 
 # 重置所有配置
@@ -948,6 +974,152 @@ reset_all() {
     ${SUDO} rm -rf /usr/local/etc/xray 2>/dev/null
     
     echo -e "${GREEN}所有配置已重置${PLAIN}"
+}
+
+# 生成配置链接HTML页面
+generate_html_page() {
+    local protocol=$1
+    local server_ip=$2
+    local port=$3
+    local html_file="proxy_links.html"
+    
+    # 创建HTML页面头部
+    cat > ${html_file} << EOF
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>代理配置链接</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .link-box {
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .link-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .link-content {
+            word-break: break-all;
+            font-family: monospace;
+            background-color: #eee;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .note {
+            color: #666;
+            font-style: italic;
+            margin-top: 5px;
+        }
+        .button {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>代理配置链接</h1>
+    <p>以下是您的代理配置链接，可以直接复制到对应的客户端中使用。</p>
+EOF
+    
+    # 根据协议添加不同的链接
+    case $protocol in
+        "VLESS+Reality+Vision")
+            UUID=$4
+            PUBLIC_KEY=$5
+            SHORT_ID=$6
+            LINK=$(generate_link "$protocol" "$server_ip" "$port" "$UUID" "$PUBLIC_KEY" "$SHORT_ID")
+            cat >> ${html_file} << EOF
+    <div class="link-box">
+        <div class="link-title">VLESS+Reality+Vision 链接 (适用于V2rayN/Shadowrocket等):</div>
+        <div class="link-content" id="vless-link">${LINK}</div>
+        <button class="button" onclick="copyToClipboard('vless-link')">复制链接</button>
+        <p class="note">提示: 点击按钮复制链接，然后在客户端中导入。</p>
+    </div>
+EOF
+            ;;
+        "VMess+WebSocket")
+            UUID=$4
+            ARGO_HOST=$5
+            LINK=$(generate_link "$protocol" "$server_ip" "$port" "$UUID" "$ARGO_HOST")
+            cat >> ${html_file} << EOF
+    <div class="link-box">
+        <div class="link-title">VMess+WebSocket+Argo 链接 (适用于V2rayN/Shadowrocket等):</div>
+        <div class="link-content" id="vmess-link">${LINK}</div>
+        <button class="button" onclick="copyToClipboard('vmess-link')">复制链接</button>
+        <p class="note">提示: 点击按钮复制链接，然后在客户端中导入。</p>
+    </div>
+EOF
+            ;;
+        "Shadowsocks-2022")
+            PASSWORD=$4
+            LINK=$(generate_link "$protocol" "$server_ip" "$port" "$PASSWORD")
+            cat >> ${html_file} << EOF
+    <div class="link-box">
+        <div class="link-title">Shadowsocks-2022 链接 (适用于Shadowsocks客户端):</div>
+        <div class="link-content" id="ss-link">${LINK}</div>
+        <button class="button" onclick="copyToClipboard('ss-link')">复制链接</button>
+        <p class="note">提示: 点击按钮复制链接，然后在客户端中导入。</p>
+    </div>
+EOF
+            ;;
+    esac
+    
+    # 添加Clash配置文件链接
+    cat >> ${html_file} << EOF
+    <div class="link-box">
+        <div class="link-title">Clash配置文件:</div>
+        <p>已生成Clash配置文件: clash_${protocol// /_}_config.yaml</p>
+        <p class="note">提示: 要创建Clash订阅链接，可将配置文件上传至GitHub或使用订阅转换服务。</p>
+    </div>
+    
+    <h2>如何创建Clash订阅链接</h2>
+    <ol>
+        <li>将生成的clash_*.yaml文件上传到GitHub仓库</li>
+        <li>获取文件的原始链接 (Raw链接)</li>
+        <li>在Clash客户端中，使用该链接作为订阅地址</li>
+    </ol>
+    <p>或者使用在线订阅转换服务，将上方的V2ray/SS链接转换为Clash订阅。</p>
+    
+    <script>
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                alert('已复制到剪贴板!');
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('复制失败，请手动复制');
+            });
+        }
+    </script>
+</body>
+</html>
+EOF
+    
+    echo -e "${GREEN}已生成HTML配置页面: ${html_file}${PLAIN}"
+    echo -e "${YELLOW}您可以使用浏览器打开此文件，方便复制各种配置链接${PLAIN}"
 }
 
 # 完全卸载
