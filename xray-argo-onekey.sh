@@ -194,8 +194,7 @@ generate_port() {
 # 获取用户输入的端口或使用随机端口
 get_port() {
     local random_port=$(generate_port)
-    echo -e "${GREEN}端口号 [1-65535] 自定义natvps或直接回车使用随机端口 ${random_port}:${PLAIN}"
-    read -p "" input_port
+    read -p "端口号 [1-65535] 自定义natvps或直接回车使用随机端口 ${random_port}: " input_port
     
     if [[ -z "$input_port" ]]; then
         echo -e "${GREEN}使用随机端口: ${random_port}${PLAIN}"
