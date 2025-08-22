@@ -221,7 +221,10 @@ configure_xray() {
     PORT=$(get_port)
     
     # 验证端口号
-    validate_port $PORT
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
+        PORT=443
+    fi
     
     # 创建配置目录
     ${SUDO} mkdir -p /usr/local/etc/xray
@@ -463,33 +466,13 @@ generate_link() {
 
 # 显示连接信息
 show_connection_info() {
-    echo -e "${GREEN}============连接信息============${PLAIN}"
+    echo -e "\n${GREEN}============安装完成============${PLAIN}"
     echo -e "${GREEN}协议: $1${PLAIN}"
     echo -e "${GREEN}服务器: $2${PLAIN}"
     echo -e "${GREEN}端口: $3${PLAIN}"
     
-    # 根据协议类型显示不同的信息
-    case $1 in
-        "VLESS+Reality+Vision")
-            echo -e "${GREEN}UUID: $4${PLAIN}"
-            echo -e "${GREEN}Public Key: $5${PLAIN}"
-            echo -e "${GREEN}Short ID: $6${PLAIN}"
-            echo -e "${GREEN}SNI: www.microsoft.com${PLAIN}"
-            echo -e "${GREEN}Flow: xtls-rprx-vision${PLAIN}"
-            ;;
-        "VMess+WebSocket")
-            echo -e "${GREEN}UUID: $4${PLAIN}"
-            echo -e "${GREEN}路径: /vmess${PLAIN}"
-            echo -e "${GREEN}Argo域名: $5${PLAIN}"
-            ;;
-        "Shadowsocks-2022")
-            echo -e "${GREEN}密码: $4${PLAIN}"
-            echo -e "${GREEN}加密方式: 2022-blake3-aes-128-gcm${PLAIN}"
-            ;;
-    esac
-    
     # 生成并显示节点链接
-    echo -e "\n${GREEN}V2rayN/Shadowrocket等客户端链接:${PLAIN}"
+    echo -e "\n${GREEN}V2rayN节点链接:${PLAIN}"
     local link=""
     case $1 in
         "VLESS+Reality+Vision")
@@ -502,17 +485,17 @@ show_connection_info() {
             link=$(generate_link "$1" "$2" "$3" "$4")
             ;;
     esac
+    
     echo -e "${YELLOW}${link}${PLAIN}"
     
     echo -e "\n${GREEN}===============================${PLAIN}"
+    echo -e "${GREEN}请复制上方链接到V2rayN客户端导入使用${PLAIN}"
     echo -e "${GREEN}By: djkyc    $(date +%Y-%m-%d)${PLAIN}"
+    echo -e "${GREEN}===============================${PLAIN}"
     
-    
-    echo -e "\n${GREEN}使用说明:${PLAIN}"
-    echo -e "${YELLOW}1. V2rayN/Shadowrocket等客户端: 直接复制上方链接导入${PLAIN}"
-    echo -e "${YELLOW}2. Clash客户端: 使用clash_*.yaml配置文件导入${PLAIN}"
-    echo -e "${YELLOW}   要创建Clash订阅链接，可将配置文件上传至GitHub或使用订阅转换服务${PLAIN}"
-    echo -e "${YELLOW}3. 其他客户端: 使用client_*.json配置文件导入${PLAIN}"
+    # 最后再次显示节点链接，方便复制
+    echo -e "\n${RED}【节点链接】请复制以下内容到V2rayN:${PLAIN}"
+    echo -e "${YELLOW}${link}${PLAIN}"
 }
 
 # 生成Clash配置
@@ -787,12 +770,6 @@ install_ss2022() {
     
     # 显示连接信息
     show_connection_info "Shadowsocks-2022" $IP $PORT $PASSWORD
-    
-    # 生成客户端配置
-    generate_client_config "Shadowsocks-2022" $IP $PORT $PASSWORD
-    
-    # 生成HTML配置页面
-    generate_html_page "Shadowsocks-2022" $IP $PORT $PASSWORD
 }
 
 # 配置Shadowsocks-2022
@@ -841,15 +818,24 @@ show_menu() {
   ${GREEN}By: djkyc    $(date +%Y-%m-%d)${PLAIN}
   ————————————————————————————————————
   ${GREEN}0.${PLAIN} 退出脚本
+  ————————————————————————————————————
+  ${YELLOW}【安装选项】${PLAIN}
   ${GREEN}1.${PLAIN} 安装 VLESS+Reality+Vision
   ${GREEN}2.${PLAIN} 安装 VMess+WebSocket+Argo
   ${GREEN}3.${PLAIN} 安装 Shadowsocks-2022
   ${GREEN}4.${PLAIN} 安装 WARP全局出站
-  ${GREEN}5.${PLAIN} 重置所有配置
-  ${GREEN}6.${PLAIN} 完全卸载所有组件
+  ————————————————————————————————————
+  ${YELLOW}【修改选项】${PLAIN}
+  ${GREEN}5.${PLAIN} 修改端口配置
+  ${GREEN}6.${PLAIN} 查看当前配置
+  ${GREEN}7.${PLAIN} 重新生成节点链接
+  ————————————————————————————————————
+  ${YELLOW}【卸载选项】${PLAIN}
+  ${GREEN}8.${PLAIN} 重置所有配置
+  ${GREEN}9.${PLAIN} 完全卸载所有组件
   ————————————————————————————————————
   "
-    echo && read -p "请输入选择 [0-6]: " num
+    echo && read -p "请输入选择 [0-9]: " num
     case "${num}" in
         0) exit 0
         ;;
@@ -861,11 +847,17 @@ show_menu() {
         ;;
         4) install_warp
         ;;
-        5) reset_all
+        5) modify_port
         ;;
-        6) uninstall_all
+        6) show_current_config
         ;;
-        *) echo -e "${RED}请输入正确的数字 [0-6]${PLAIN}"
+        7) regenerate_links
+        ;;
+        8) reset_all
+        ;;
+        9) uninstall_all
+        ;;
+        *) echo -e "${RED}请输入正确的数字 [0-9]${PLAIN}"
         ;;
     esac
 }
@@ -902,12 +894,6 @@ install_vless_reality_vision() {
     
     # 显示连接信息
     show_connection_info "VLESS+Reality+Vision" $IP $PORT $UUID $PUBLIC_KEY $SHORT_ID
-    
-    # 生成客户端配置
-    generate_client_config "VLESS+Reality+Vision" $IP $PORT $UUID $PUBLIC_KEY $SHORT_ID
-    
-    # 生成HTML配置页面
-    generate_html_page "VLESS+Reality+Vision" $IP $PORT $UUID $PUBLIC_KEY $SHORT_ID
 }
 
 # 安装VMess+WebSocket+Argo
@@ -944,12 +930,143 @@ install_vmess_ws_argo() {
     
     # 显示连接信息
     show_connection_info "VMess+WebSocket" $IP $PORT $UUID $ARGO_HOST
+}
+
+# 修改端口配置
+modify_port() {
+    echo -e "${GREEN}修改端口配置${PLAIN}"
+    echo -e "${YELLOW}注意: 修改端口后需要重新生成节点链接${PLAIN}"
     
-    # 生成客户端配置
-    generate_client_config "VMess+WebSocket" $IP $PORT $UUID $ARGO_HOST
+    # 检查是否有配置文件
+    if [[ ! -f "/usr/local/etc/xray/config.json" ]]; then
+        echo -e "${RED}未找到Xray配置文件，请先安装协议${PLAIN}"
+        return
+    fi
     
-    # 生成HTML配置页面
-    generate_html_page "VMess+WebSocket" $IP $PORT $UUID $ARGO_HOST
+    # 获取当前端口
+    CURRENT_PORTS=$(${SUDO} jq -r '.inbounds[].port' /usr/local/etc/xray/config.json 2>/dev/null | tr '\n' ' ')
+    echo -e "${GREEN}当前使用的端口: ${CURRENT_PORTS}${PLAIN}"
+    
+    # 获取新端口
+    NEW_PORT=$(get_port)
+    
+    # 检查端口是否已被使用
+    if netstat -tuln | grep -q ":${NEW_PORT} "; then
+        echo -e "${RED}端口 ${NEW_PORT} 已被占用，请选择其他端口${PLAIN}"
+        return
+    fi
+    
+    # 更新配置文件中的端口
+    ${SUDO} jq --arg port "$NEW_PORT" '.inbounds[].port = ($port | tonumber)' /usr/local/etc/xray/config.json > /tmp/new_config.json
+    ${SUDO} mv /tmp/new_config.json /usr/local/etc/xray/config.json
+    
+    # 重启Xray服务
+    ${SUDO} systemctl restart xray
+    
+    echo -e "${GREEN}端口已修改为: ${NEW_PORT}${PLAIN}"
+    echo -e "${YELLOW}请选择菜单选项7重新生成节点链接${PLAIN}"
+}
+
+# 查看当前配置
+show_current_config() {
+    echo -e "${GREEN}当前配置信息${PLAIN}"
+    
+    # 检查是否有配置文件
+    if [[ ! -f "/usr/local/etc/xray/config.json" ]]; then
+        echo -e "${RED}未找到Xray配置文件，请先安装协议${PLAIN}"
+        return
+    fi
+    
+    # 获取服务器IP
+    get_ip
+    
+    # 显示配置信息
+    echo -e "${GREEN}服务器IP: ${IP}${PLAIN}"
+    
+    # 获取端口信息
+    PORTS=$(${SUDO} jq -r '.inbounds[] | "端口: \(.port) 协议: \(.protocol)"' /usr/local/etc/xray/config.json 2>/dev/null)
+    if [[ -n "$PORTS" ]]; then
+        echo -e "${GREEN}已配置的协议:${PLAIN}"
+        echo "$PORTS"
+    else
+        echo -e "${YELLOW}未找到已配置的协议${PLAIN}"
+    fi
+    
+    # 检查服务状态
+    if ${SUDO} systemctl is-active --quiet xray; then
+        echo -e "${GREEN}Xray服务状态: 运行中${PLAIN}"
+    else
+        echo -e "${RED}Xray服务状态: 已停止${PLAIN}"
+    fi
+    
+    # 检查Cloudflared进程
+    if pgrep -f cloudflared > /dev/null; then
+        echo -e "${GREEN}Cloudflared状态: 运行中${PLAIN}"
+        ARGO_DOMAIN=$(grep -o "https://.*trycloudflare.com" /tmp/argo.log 2>/dev/null | head -n 1)
+        if [[ -n "$ARGO_DOMAIN" ]]; then
+            echo -e "${GREEN}Argo域名: ${ARGO_DOMAIN}${PLAIN}"
+        fi
+    else
+        echo -e "${YELLOW}Cloudflared状态: 未运行${PLAIN}"
+    fi
+}
+
+# 重新生成节点链接
+regenerate_links() {
+    echo -e "${GREEN}重新生成节点链接${PLAIN}"
+    
+    # 检查是否有配置文件
+    if [[ ! -f "/usr/local/etc/xray/config.json" ]]; then
+        echo -e "${RED}未找到Xray配置文件，请先安装协议${PLAIN}"
+        return
+    fi
+    
+    # 获取服务器IP
+    get_ip
+    
+    # 分析配置文件，生成对应的节点链接
+    ${SUDO} jq -c '.inbounds[]' /usr/local/etc/xray/config.json | while read -r inbound; do
+        PROTOCOL=$(echo "$inbound" | jq -r '.protocol')
+        PORT=$(echo "$inbound" | jq -r '.port')
+        
+        case $PROTOCOL in
+            "vless")
+                # VLESS+Reality+Vision
+                UUID=$(echo "$inbound" | jq -r '.settings.clients[0].id')
+                if [[ -f "/tmp/x25519.keys" ]]; then
+                    PUBLIC_KEY=$(cat /tmp/x25519.keys | grep Public | awk '{print $3}')
+                    SHORT_ID=$(echo "$inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]')
+                    
+                    echo -e "\n${GREEN}VLESS+Reality+Vision 节点链接:${PLAIN}"
+                    LINK=$(generate_link "VLESS+Reality+Vision" "$IP" "$PORT" "$UUID" "$PUBLIC_KEY" "$SHORT_ID")
+                    echo -e "${YELLOW}${LINK}${PLAIN}"
+                fi
+                ;;
+            "vmess")
+                # VMess+WebSocket
+                UUID=$(echo "$inbound" | jq -r '.settings.clients[0].id')
+                ARGO_DOMAIN=$(grep -o "https://.*trycloudflare.com" /tmp/argo.log 2>/dev/null | head -n 1)
+                if [[ -n "$ARGO_DOMAIN" ]]; then
+                    ARGO_HOST=$(echo $ARGO_DOMAIN | awk -F[/:] '{print $4}')
+                    
+                    echo -e "\n${GREEN}VMess+WebSocket 节点链接:${PLAIN}"
+                    LINK=$(generate_link "VMess+WebSocket" "$IP" "$PORT" "$UUID" "$ARGO_HOST")
+                    echo -e "${YELLOW}${LINK}${PLAIN}"
+                fi
+                ;;
+            "shadowsocks")
+                # Shadowsocks-2022
+                PASSWORD=$(echo "$inbound" | jq -r '.settings.password')
+                
+                echo -e "\n${GREEN}Shadowsocks-2022 节点链接:${PLAIN}"
+                LINK=$(generate_link "Shadowsocks-2022" "$IP" "$PORT" "$PASSWORD")
+                echo -e "${YELLOW}${LINK}${PLAIN}"
+                ;;
+        esac
+    done
+    
+    echo -e "\n${GREEN}===============================${PLAIN}"
+    echo -e "${GREEN}请复制上方链接到V2rayN客户端导入使用${PLAIN}"
 }
 
 # 重置所有配置
