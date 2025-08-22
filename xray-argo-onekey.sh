@@ -267,21 +267,21 @@ EOF
     
     ${SUDO} mv /tmp/config.json /usr/local/etc/xray/config.json
     
-    echo -e "${GREEN}Xray基础配置完成${PLAIN}"
+    echo -e "${GREEN}Xray基础配置完成${PLAIN}" >&2
     
-    # 返回生成的UUID和端口
+    # 返回生成的UUID和端口（重定向前面的输出到stderr，避免干扰返回值）
     echo "$UUID $PORT"
 }
 
 # 配置Argo隧道
 configure_argo() {
-    echo -e "${GREEN}开始配置Argo隧道...${PLAIN}"
+    echo -e "${GREEN}开始配置Argo隧道...${PLAIN}" >&2
     
     # 生成随机隧道名称
     TUNNEL_NAME="tunnel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
     
     # 创建临时隧道
-    echo -e "${YELLOW}创建Argo临时隧道...${PLAIN}"
+    echo -e "${YELLOW}创建Argo临时隧道...${PLAIN}" >&2
     ARGO_PORT=$1
     
     # 启动Argo隧道服务
@@ -294,11 +294,12 @@ configure_argo() {
     ARGO_DOMAIN=$(grep -o "https://.*trycloudflare.com" /tmp/argo.log | head -n 1)
     
     if [[ -z "${ARGO_DOMAIN}" ]]; then
-        echo -e "${RED}Argo隧道创建失败，请检查日志: /tmp/argo.log${PLAIN}"
+    if [[ -z "${ARGO_DOMAIN}" ]]; then
+        echo -e "${RED}Argo隧道创建失败，请检查日志: /tmp/argo.log${PLAIN}" >&2
         exit 1
     fi
     
-    echo -e "${GREEN}Argo隧道创建成功: ${ARGO_DOMAIN}${PLAIN}"
+    echo -e "${GREEN}Argo隧道创建成功: ${ARGO_DOMAIN}${PLAIN}" >&2
     
     # 返回隧道域名
     echo "$ARGO_DOMAIN"
@@ -306,7 +307,7 @@ configure_argo() {
 
 # 配置VLESS+Reality+Vision
 configure_vless_reality_vision() {
-    echo -e "${GREEN}开始配置VLESS+Reality+Vision...${PLAIN}"
+    echo -e "${GREEN}开始配置VLESS+Reality+Vision...${PLAIN}" >&2
     
     # 获取参数
     UUID=$1
@@ -387,7 +388,7 @@ EOF
 
 # 配置VMess+WebSocket
 configure_vmess_ws() {
-    echo -e "${GREEN}开始配置VMess+WebSocket...${PLAIN}"
+    echo -e "${GREEN}开始配置VMess+WebSocket...${PLAIN}" >&2
     
     # 获取参数
     UUID=$1
@@ -485,6 +486,12 @@ show_connection_info() {
     echo -e "${GREEN}服务器: $2${PLAIN}"
     echo -e "${GREEN}端口: $3${PLAIN}"
     
+    # 验证端口参数
+    if ! [[ "$3" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误: 端口参数无效: $3${PLAIN}"
+        return 1
+    fi
+    
     # 生成并显示节点链接
     echo -e "\n${GREEN}V2rayN节点链接:${PLAIN}"
     local link=""
@@ -500,7 +507,11 @@ show_connection_info() {
             ;;
     esac
     
-    echo -e "${YELLOW}${link}${PLAIN}"
+    if [[ -n "$link" && "$link" != "错误"* ]]; then
+        echo -e "${YELLOW}${link}${PLAIN}"
+    else
+        echo -e "${RED}节点链接生成失败${PLAIN}"
+    fi
     
     echo -e "\n${GREEN}===============================${PLAIN}"
     echo -e "${GREEN}请复制上方链接到V2rayN客户端导入使用${PLAIN}"
@@ -766,8 +777,9 @@ install_ss2022() {
     
     # 配置Xray
     XRAY_CONFIG=$(configure_xray)
-    UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
-    PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
+    # 从返回值中提取UUID和PORT（取最后两个字段）
+    UUID=$(echo $XRAY_CONFIG | awk '{print $(NF-1)}')
+    PORT=$(echo $XRAY_CONFIG | awk '{print $NF}')
     
     # 配置Shadowsocks-2022
     PASSWORD=$(configure_ss2022 $PORT)
@@ -778,7 +790,7 @@ install_ss2022() {
 
 # 配置Shadowsocks-2022
 configure_ss2022() {
-    echo -e "${GREEN}开始配置Shadowsocks-2022...${PLAIN}"
+    echo -e "${GREEN}开始配置Shadowsocks-2022...${PLAIN}" >&2
     
     # 获取参数
     PORT=$1
@@ -911,8 +923,9 @@ install_vmess_ws_argo() {
     
     # 配置Xray
     XRAY_CONFIG=$(configure_xray)
-    UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
-    PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
+    # 从返回值中提取UUID和PORT（取最后两个字段）
+    UUID=$(echo $XRAY_CONFIG | awk '{print $(NF-1)}')
+    PORT=$(echo $XRAY_CONFIG | awk '{print $NF}')
     
     # 配置Argo隧道
     ARGO_DOMAIN=$(configure_argo $PORT)
