@@ -400,6 +400,36 @@ EOF
     echo "$ARGO_HOST"
 }
 
+# 生成节点链接
+generate_link() {
+    local protocol=$1
+    local server_ip=$2
+    local port=$3
+    
+    case $protocol in
+        "VLESS+Reality+Vision")
+            UUID=$4
+            PUBLIC_KEY=$5
+            SHORT_ID=$6
+            echo "vless://${UUID}@${server_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none#VLESS-Reality-Vision"
+            ;;
+        "VMess+WebSocket")
+            UUID=$4
+            ARGO_HOST=$5
+            # 生成VMess配置JSON
+            local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WebSocket-Argo\",\"add\":\"${ARGO_HOST}\",\"port\":443,\"id\":\"${UUID}\",\"aid\":0,\"net\":\"ws\",\"type\":\"none\",\"host\":\"${ARGO_HOST}\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"${ARGO_HOST}\"}"
+            # Base64编码
+            echo "vmess://$(echo $vmess_config | base64 -w 0)"
+            ;;
+        "Shadowsocks-2022")
+            PASSWORD=$4
+            # 使用URL安全的Base64编码
+            local userinfo=$(echo -n "2022-blake3-aes-128-gcm:${PASSWORD}" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+            echo "ss://${userinfo}@${server_ip}:${port}#Shadowsocks-2022"
+            ;;
+    esac
+}
+
 # 显示连接信息
 show_connection_info() {
     echo -e "${GREEN}============连接信息============${PLAIN}"
@@ -427,7 +457,23 @@ show_connection_info() {
             ;;
     esac
     
-    echo -e "${GREEN}===============================${PLAIN}"
+    # 生成并显示节点链接
+    echo -e "\n${GREEN}节点链接:${PLAIN}"
+    local link=""
+    case $1 in
+        "VLESS+Reality+Vision")
+            link=$(generate_link "$1" "$2" "$3" "$4" "$5" "$6")
+            ;;
+        "VMess+WebSocket")
+            link=$(generate_link "$1" "$2" "$3" "$4" "$5")
+            ;;
+        "Shadowsocks-2022")
+            link=$(generate_link "$1" "$2" "$3" "$4")
+            ;;
+    esac
+    echo -e "${YELLOW}${link}${PLAIN}"
+    
+    echo -e "\n${GREEN}===============================${PLAIN}"
     echo -e "${GREEN}By: djkyc    $(date +%Y-%m-%d)${PLAIN}"
 }
 
