@@ -197,17 +197,17 @@ get_port() {
     read -p "端口号 [1-65535] 自定义natvps或直接回车使用随机端口 ${random_port}: " input_port
     
     if [[ -z "$input_port" ]]; then
-        echo -e "${GREEN}使用随机端口: ${random_port}${PLAIN}"
+        echo -e "${GREEN}使用随机端口: ${random_port}${PLAIN}" >&2
         echo $random_port
     else
         if ! [[ "$input_port" =~ ^[0-9]+$ ]]; then
-            echo -e "${RED}错误: 端口号必须是数字，将使用随机端口 ${random_port}${PLAIN}"
+            echo -e "${RED}错误: 端口号必须是数字，将使用随机端口 ${random_port}${PLAIN}" >&2
             echo $random_port
         elif [ "$input_port" -lt 1 ] || [ "$input_port" -gt 65535 ]; then
-            echo -e "${RED}错误: 端口号必须在1-65535之间，将使用随机端口 ${random_port}${PLAIN}"
+            echo -e "${RED}错误: 端口号必须在1-65535之间，将使用随机端口 ${random_port}${PLAIN}" >&2
             echo $random_port
         else
-            echo -e "${GREEN}使用自定义端口: ${input_port}${PLAIN}"
+            echo -e "${GREEN}使用自定义端口: ${input_port}${PLAIN}" >&2
             echo $input_port
         fi
     fi
@@ -215,18 +215,18 @@ get_port() {
 
 # 配置Xray
 configure_xray() {
-    echo -e "${GREEN}开始配置Xray...${PLAIN}"
+    echo -e "${GREEN}开始配置Xray...${PLAIN}" >&2
     
     # 生成随机参数
     UUID=$(generate_uuid)
     
     # 显示端口选择提示
-    echo -e "${GREEN}端口设置选择:${PLAIN}"
+    echo -e "${GREEN}端口设置选择:${PLAIN}" >&2
     PORT=$(get_port)
     
     # 验证端口号
     if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
+        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}" >&2
         PORT=443
     fi
     
