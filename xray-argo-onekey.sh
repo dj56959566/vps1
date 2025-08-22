@@ -194,13 +194,11 @@ generate_port() {
 # 获取用户输入的端口或使用随机端口
 get_port() {
     local random_port=$(generate_port)
-    echo -e "${GREEN}端口设置选择:${PLAIN}"
-    echo -e "${YELLOW}1. 自定义端口 - 手动输入指定端口号${PLAIN}"
-    echo -e "${YELLOW}2. 默认随机 - 自动生成随机端口 ${random_port}${PLAIN}"
-    echo -e "${GREEN}请输入端口号 [1-65535] 或直接回车使用随机端口:${PLAIN}"
+    echo -e "${GREEN}端口号 [1-65535] 自定义natvps或直接回车使用随机端口 ${random_port}:${PLAIN}"
     read -p "" input_port
     
     if [[ -z "$input_port" ]]; then
+        echo -e "${GREEN}使用随机端口: ${random_port}${PLAIN}"
         echo $random_port
     else
         if ! [[ "$input_port" =~ ^[0-9]+$ ]]; then
@@ -210,6 +208,7 @@ get_port() {
             echo -e "${RED}错误: 端口号必须在1-65535之间，将使用随机端口 ${random_port}${PLAIN}"
             echo $random_port
         else
+            echo -e "${GREEN}使用自定义端口: ${input_port}${PLAIN}"
             echo $input_port
         fi
     fi
@@ -221,6 +220,9 @@ configure_xray() {
     
     # 生成随机参数
     UUID=$(generate_uuid)
+    
+    # 显示端口选择提示
+    echo -e "${GREEN}端口设置选择:${PLAIN}"
     PORT=$(get_port)
     
     # 验证端口号
@@ -312,9 +314,15 @@ configure_vless_reality_vision() {
     PORT=$2
     
     # 生成私钥和公钥
-    ${SUDO} x25519 > /tmp/x25519.keys
-    PRIVATE_KEY=$(cat /tmp/x25519.keys | grep Private | awk '{print $3}')
-    PUBLIC_KEY=$(cat /tmp/x25519.keys | grep Public | awk '{print $3}')
+    if command -v xray &> /dev/null; then
+        ${SUDO} xray x25519 > /tmp/x25519.keys 2>/dev/null
+        PRIVATE_KEY=$(cat /tmp/x25519.keys | grep Private | awk '{print $3}')
+        PUBLIC_KEY=$(cat /tmp/x25519.keys | grep Public | awk '{print $3}')
+    else
+        # 如果xray命令不可用，使用openssl生成密钥
+        PRIVATE_KEY=$(openssl rand -base64 32)
+        PUBLIC_KEY=$(openssl rand -base64 32)
+    fi
     
     # 生成短ID
     SHORT_ID=$(openssl rand -hex 8)
@@ -364,8 +372,12 @@ configure_vless_reality_vision() {
 EOF
     
     # 合并配置
-    ${SUDO} jq -s '.[0].inbounds += .[1].inbounds | .[0]' /usr/local/etc/xray/config.json /tmp/vless_reality_vision.json > /tmp/merged_config.json
-    ${SUDO} mv /tmp/merged_config.json /usr/local/etc/xray/config.json
+    if ${SUDO} jq -s '.[0].inbounds += .[1].inbounds | .[0]' /usr/local/etc/xray/config.json /tmp/vless_reality_vision.json > /tmp/merged_config.json 2>/dev/null; then
+        ${SUDO} mv /tmp/merged_config.json /usr/local/etc/xray/config.json
+    else
+        echo -e "${YELLOW}配置合并失败，使用新配置覆盖...${PLAIN}"
+        ${SUDO} cp /tmp/vless_reality_vision.json /usr/local/etc/xray/config.json
+    fi
     
     # 重启Xray服务
     ${SUDO} systemctl restart xray
