@@ -194,7 +194,10 @@ generate_port() {
 # 获取用户输入的端口或使用随机端口
 get_port() {
     local random_port=$(generate_port)
-    echo -e "${GREEN}请输入端口号 [1-65535]，回车将使用随机端口 ${random_port}:${PLAIN}"
+    echo -e "${GREEN}端口设置选择:${PLAIN}"
+    echo -e "${YELLOW}1. 自定义端口 - 手动输入指定端口号${PLAIN}"
+    echo -e "${YELLOW}2. 默认随机 - 自动生成随机端口 ${random_port}${PLAIN}"
+    echo -e "${GREEN}请输入端口号 [1-65535] 或直接回车使用随机端口:${PLAIN}"
     read -p "" input_port
     
     if [[ -z "$input_port" ]]; then
@@ -492,10 +495,6 @@ show_connection_info() {
     echo -e "${GREEN}请复制上方链接到V2rayN客户端导入使用${PLAIN}"
     echo -e "${GREEN}By: djkyc    $(date +%Y-%m-%d)${PLAIN}"
     echo -e "${GREEN}===============================${PLAIN}"
-    
-    # 最后再次显示节点链接，方便复制
-    echo -e "\n${RED}【节点链接】请复制以下内容到V2rayN:${PLAIN}"
-    echo -e "${YELLOW}${link}${PLAIN}"
 }
 
 # 生成Clash配置
