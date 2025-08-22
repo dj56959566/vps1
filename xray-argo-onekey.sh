@@ -294,7 +294,6 @@ configure_argo() {
     ARGO_DOMAIN=$(grep -o "https://.*trycloudflare.com" /tmp/argo.log | head -n 1)
     
     if [[ -z "${ARGO_DOMAIN}" ]]; then
-    if [[ -z "${ARGO_DOMAIN}" ]]; then
         echo -e "${RED}Argo隧道创建失败，请检查日志: /tmp/argo.log${PLAIN}" >&2
         exit 1
     fi
