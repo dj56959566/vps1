@@ -769,12 +769,6 @@ install_ss2022() {
     UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
     
-    # 验证端口号
-    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
-        PORT=443
-    fi
-    
     # 配置Shadowsocks-2022
     PASSWORD=$(configure_ss2022 $PORT)
     
@@ -891,12 +885,6 @@ install_vless_reality_vision() {
     UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
     
-    # 验证端口号
-    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
-        PORT=443
-    fi
-    
     # 配置VLESS+Reality+Vision
     REALITY_CONFIG=$(configure_vless_reality_vision $UUID $PORT)
     PUBLIC_KEY=$(echo $REALITY_CONFIG | awk '{print $1}')
@@ -925,12 +913,6 @@ install_vmess_ws_argo() {
     XRAY_CONFIG=$(configure_xray)
     UUID=$(echo $XRAY_CONFIG | awk '{print $1}')
     PORT=$(echo $XRAY_CONFIG | awk '{print $2}')
-    
-    # 验证端口号
-    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误: 端口号无效，将使用默认端口 443${PLAIN}"
-        PORT=443
-    fi
     
     # 配置Argo隧道
     ARGO_DOMAIN=$(configure_argo $PORT)
