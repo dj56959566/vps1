@@ -47,12 +47,12 @@ bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh)
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/dj56959566/vps1/main/xray-argo-onekey.sh)"
-
+```
 
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
-
 # 3.Djkyc Hysteria2 安装/卸载脚本
+
  这是一个用于安装和卸载 Hysteria2 的一键脚本。
 
 功能特点:
