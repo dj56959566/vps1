@@ -645,9 +645,10 @@ show_menu() {
   ${GREEN}3.${PLAIN} 安装 Shadowsocks-2022
   ${GREEN}4.${PLAIN} 安装 WARP全局出站
   ${GREEN}5.${PLAIN} 重置所有配置
+  ${GREEN}6.${PLAIN} 完全卸载所有组件
   ————————————————————————————————————
   "
-    echo && read -p "请输入选择 [0-5]: " num
+    echo && read -p "请输入选择 [0-6]: " num
     case "${num}" in
         0) exit 0
         ;;
@@ -661,7 +662,9 @@ show_menu() {
         ;;
         5) reset_all
         ;;
-        *) echo -e "${RED}请输入正确的数字 [0-5]${PLAIN}"
+        6) uninstall_all
+        ;;
+        *) echo -e "${RED}请输入正确的数字 [0-6]${PLAIN}"
         ;;
     esac
 }
@@ -746,6 +749,66 @@ reset_all() {
     ${SUDO} rm -rf /usr/local/etc/xray 2>/dev/null
     
     echo -e "${GREEN}所有配置已重置${PLAIN}"
+}
+
+# 完全卸载
+uninstall_all() {
+    echo -e "${RED}警告: 此操作将完全卸载所有组件并删除所有相关文件${PLAIN}"
+    read -p "是否继续? (y/n): " confirm
+    
+    if [[ "$confirm" != "y" ]]; then
+        echo -e "${GREEN}已取消卸载操作${PLAIN}"
+        return
+    fi
+    
+    # 停止并删除服务
+    echo -e "${YELLOW}停止并禁用服务...${PLAIN}"
+    ${SUDO} systemctl stop xray 2>/dev/null
+    ${SUDO} systemctl disable xray 2>/dev/null
+    ${SUDO} systemctl stop hysteria-server 2>/dev/null
+    ${SUDO} systemctl disable hysteria-server 2>/dev/null
+    ${SUDO} systemctl stop tuic 2>/dev/null
+    ${SUDO} systemctl disable tuic 2>/dev/null
+    
+    # 断开WARP连接并卸载
+    echo -e "${YELLOW}卸载WARP...${PLAIN}"
+    ${SUDO} warp-cli disconnect 2>/dev/null
+    if [[ "${PACKAGE_MANAGER}" == "apt" ]]; then
+        ${SUDO} apt remove -y cloudflare-warp 2>/dev/null
+    elif [[ "${PACKAGE_MANAGER}" == "yum" ]]; then
+        ${SUDO} yum remove -y cloudflare-warp 2>/dev/null
+    fi
+    
+    # 杀死cloudflared进程
+    echo -e "${YELLOW}停止Cloudflared进程...${PLAIN}"
+    ${SUDO} pkill -f cloudflared 2>/dev/null
+    
+    # 卸载Xray
+    echo -e "${YELLOW}卸载Xray...${PLAIN}"
+    if [[ -f "/usr/local/bin/xray" ]]; then
+        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge
+    fi
+    
+    # 删除Cloudflared
+    echo -e "${YELLOW}删除Cloudflared...${PLAIN}"
+    ${SUDO} rm -f /usr/local/bin/cloudflared 2>/dev/null
+    
+    # 删除配置文件和生成的客户端配置
+    echo -e "${YELLOW}删除配置文件...${PLAIN}"
+    ${SUDO} rm -rf /usr/local/etc/xray 2>/dev/null
+    ${SUDO} rm -rf /etc/hysteria 2>/dev/null
+    ${SUDO} rm -rf /etc/tuic 2>/dev/null
+    ${SUDO} rm -f /etc/systemd/system/tuic.service 2>/dev/null
+    ${SUDO} rm -f client_*.json 2>/dev/null
+    
+    # 删除日志文件
+    echo -e "${YELLOW}删除日志文件...${PLAIN}"
+    ${SUDO} rm -f /tmp/argo.log 2>/dev/null
+    
+    # 重新加载systemd
+    ${SUDO} systemctl daemon-reload
+    
+    echo -e "${GREEN}所有组件已完全卸载，系统已恢复到安装前状态${PLAIN}"
 }
 
 # 主程序入口
