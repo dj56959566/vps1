@@ -1,5 +1,5 @@
 #!/bin/bash
-# 一键轻量 SOCKS5 安装 + 输出 TG Proxy URL
+# 一键轻量 SOCKS5 安装 + 输出 TG Proxy URL + 卸载命令提示
 # Author: ChatGPT
 
 # ---------- 输入用户名密码 ----------
@@ -35,12 +35,16 @@ fi
 # ---------- 启动 SOCKS5 ----------
 pkill -f "microsocks.*:$PORT" 2>/dev/null
 nohup microsocks -p $PORT -u $USERNAME -P $PASSWORD >/dev/null 2>&1 &
-
 sleep 1
 
 # ---------- 生成 Telegram Proxy URL ----------
-# secret 需要将 user:pass 转为 hex
 SECRET_HEX=$(echo -n "$USERNAME:$PASSWORD" | xxd -p | tr -d '\n')
 
-echo -e "\nSOCKS5 已启动，Telegram Proxy URL："
+echo -e "\n✅ SOCKS5 已启动"
+echo "Telegram Proxy URL："
 echo "https://t.me/proxy?server=$IP&port=$PORT&secret=$SECRET_HEX"
+
+# ---------- 输出卸载命令 ----------
+echo -e "\n⚠️ 卸载/停止 SOCKS5："
+echo "pkill -f 'microsocks.*:$PORT'"
+echo "rm -f /usr/local/bin/microsocks"
