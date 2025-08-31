@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# 一键安装 SOCKS5（增强版）
-# 功能：自动检测 VPS 类型、架构，下载 microsocks，支持 systemd 自启
+# 一键安装 SOCKS5（最终增强版）
+# 功能：
+# - 自动检测架构
+# - 自动下载 microsocks
+# - 自定义端口、用户名、密码（密码可随机生成）
+# - 绿色高亮输出重要信息
+# - Telegram URL 输出正确格式
+# - 支持 systemd 自启
+# - 一行停止/卸载命令
 
 set -e
 
@@ -8,7 +15,7 @@ GREEN="\033[32m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
-echo -e "${GREEN}=== SOCKS5 安装脚本 ===${RESET}"
+echo -e "${GREEN}=== 一键安装 SOCKS5（microsocks） ===${RESET}"
 
 # -------------------- VPS 类型检测（仅提示） --------------------
 VPS_TYPE="未知"
