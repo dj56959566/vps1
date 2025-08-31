@@ -177,14 +177,14 @@ generate_tg_url() {
         TG_SOCKS_URL="$TG_SOCKS_URL&user=$USERNAME&pass=$PASSWORD"
     fi
     
-    # MTProto格式 (仅作为参考，因为此脚本实际设置的是SOCKS5代理)
-    TG_MTPROTO_URL="https://t.me/proxy?server=$IP&port=$PORT"
+    # Telegram网页格式 (使用/socks路径)
+    TG_WEB_URL="https://t.me/socks?server=$IP&port=$PORT"
     if [[ -n "$USERNAME" && -n "$PASSWORD" ]]; then
-        TG_MTPROTO_URL="$TG_MTPROTO_URL&user=$USERNAME&pass=$PASSWORD"
+        TG_WEB_URL="$TG_WEB_URL&user=$USERNAME&pass=$PASSWORD"
     fi
     
     echo -e "${GREEN}Telegram SOCKS5代理URL (点击可直接使用): ${TG_SOCKS_URL}${PLAIN}"
-    echo -e "${GREEN}Telegram MTProto格式参考 (注意：此脚本设置的是SOCKS5代理): ${TG_MTPROTO_URL}${PLAIN}"
+    echo -e "${GREEN}Telegram 网页链接格式 (点击可直接使用): ${TG_WEB_URL}${PLAIN}"
 }
 
 # 主函数
