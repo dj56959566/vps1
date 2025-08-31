@@ -1,3 +1,10 @@
+## 0.
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/ha.sh)
+```
+
+
+
 ## 1.socks5使用方法
 
 **一键安装：**
