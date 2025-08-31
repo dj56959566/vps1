@@ -1,41 +1,21 @@
 #!/bin/bash
-# highcpu_alert.sh
-# Real-time thread CPU monitor with alert
-# Author: YourName
-# GitHub: https://github.com/yourname/highcpu-alert
+# 文件名：highcpu_threads.sh
+# 实时显示线程 CPU 使用率，超过阈值高亮
 
-# ------------- Configuration -------------
-LOAD_THRESHOLD=2       # Load average threshold
-CPU_THRESHOLD=80       # Single thread CPU% threshold
-INTERVAL=1             # Refresh interval in seconds
-TOP_COUNT=20           # Number of threads to show
-# ----------------------------------------
+THRESHOLD=10  # CPU 使用率阈值百分比
+INTERVAL=1    # 刷新间隔，秒
 
 while true; do
     clear
-    DATE_NOW=$(date)
-    echo "Thread CPU Monitor with Alert - $DATE_NOW"
-    echo "TID     CPU%    COMMAND"
-    echo "-----------------------"
-
-    # Get current load
-    LOAD=$(cat /proc/loadavg | awk '{print $1}')
-
-    # Highlight if load exceeds threshold
-    if (( $(echo "$LOAD > $LOAD_THRESHOLD" | bc -l) )); then
-        echo -e "\033[1;33mHigh Load: $LOAD\033[0m"
-        # Optional: beep sound
-        echo -e "\a"
-    fi
-
-    # Show top threads by CPU
-    ps -eLo tid,%cpu,comm --sort=-%cpu | tail -n +2 | head -n $TOP_COUNT | \
-    awk -v cpu_thr=$CPU_THRESHOLD '{
-        if($2+0 > cpu_thr)
-            printf "\033[1;31m%s %s %s\033[0m\n", $1,$2,$3; 
+    echo "High CPU Threads Monitor (Threshold: $THRESHOLD%) - $(date)"
+    echo "PID     TID     CPU%    MEM%    COMMAND"
+    echo "-----------------------------------------"
+    ps -eLo pid,tid,%cpu,%mem,comm --sort=-%cpu | tail -n +2 | head -n 20 | \
+    awk -v threshold=$THRESHOLD '{
+        if($3+0 > threshold)
+            printf "\033[1;31m%s %s %s %s %s\033[0m\n", $1,$2,$3,$4,$5;
         else
-            printf "%s %s %s\n", $1,$2,$3;
+            printf "%s %s %s %s %s\n", $1,$2,$3,$4,$5;
     }'
-
     sleep $INTERVAL
 done
