@@ -1,17 +1,21 @@
 #!/bin/bash
-# 一键部署轻量 SOCKS5 代理（支持自定义端口+TG格式输出）
+# 一键轻量 SOCKS5 安装 + 输出 TG Proxy URL
 # Author: ChatGPT
 
-# ---------- 配置 ----------
-# 用户名和密码
-USERNAME="socksuser"
-PASSWORD="sockspass"
+# ---------- 输入用户名密码 ----------
+read -p "请输入 SOCKS5 用户名: " USERNAME
+read -sp "请输入 SOCKS5 密码: " PASSWORD
+echo
 
-# 端口列表，自行修改，例如: 1080 1081 1082
-read -p "请输入要开启的端口（用空格分隔，例如: 1080 1081 1082）: " PORTS
+# ---------- 输入端口 ----------
+read -p "请输入 SOCKS5 端口（如 1080）: " PORT
 
-# VPS 公网 IP
+# ---------- 获取 VPS 公网 IP ----------
 IP=$(curl -s https://api.ipify.org)
+if [[ -z "$IP" ]]; then
+    echo "无法获取公网 IP，请检查网络"
+    exit 1
+fi
 
 # ---------- 安装 microsocks ----------
 if ! command -v microsocks &>/dev/null; then
@@ -29,17 +33,14 @@ if ! command -v microsocks &>/dev/null; then
 fi
 
 # ---------- 启动 SOCKS5 ----------
-for PORT in $PORTS; do
-    pkill -f "microsocks.*:$PORT" 2>/dev/null
-    nohup microsocks -p $PORT -u $USERNAME -P $PASSWORD >/dev/null 2>&1 &
-done
+pkill -f "microsocks.*:$PORT" 2>/dev/null
+nohup microsocks -p $PORT -u $USERNAME -P $PASSWORD >/dev/null 2>&1 &
 
 sleep 1
 
-# ---------- 输出 TG URL 格式 ----------
-echo -e "\nSocks5 代理已启动，TG 格式连接信息如下："
-for PORT in $PORTS; do
-    echo "socks5://$USERNAME:$PASSWORD@$IP:$PORT"
-done
+# ---------- 生成 Telegram Proxy URL ----------
+# secret 需要将 user:pass 转为 hex
+SECRET_HEX=$(echo -n "$USERNAME:$PASSWORD" | xxd -p | tr -d '\n')
 
-echo -e "\n全部端口已启动完成"
+echo -e "\nSOCKS5 已启动，Telegram Proxy URL："
+echo "https://t.me/proxy?server=$IP&port=$PORT&secret=$SECRET_HEX"
