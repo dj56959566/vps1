@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 极简一键安装 SOCKS5
+# 完全零提示 SOCKS5 安装脚本
 
 set -e
 
@@ -7,11 +7,10 @@ GREEN="\033[32m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
-echo -e "${GREEN}=== 安装 SOCKS5 ===${RESET}"
+echo -e "${GREEN}=== 自动安装 SOCKS5 ===${RESET}"
 
 # 获取公网 IP
-IP=$(curl -s https://api.ipify.org || echo "")
-[[ -z "$IP" ]] && read -rp "未检测到公网 IP，请输入: " IP
+IP=$(curl -s https://api.ipify.org || echo "127.0.0.1")
 echo -e "${GREEN}公网 IP: $IP${RESET}"
 
 # 检测架构
@@ -27,13 +26,10 @@ esac
 sudo wget -qO /usr/local/bin/microsocks "$BIN"
 sudo chmod +x /usr/local/bin/microsocks
 
-# 用户输入
-read -rp "端口(默认1080): " PORT
-PORT=${PORT:-1080}
-read -rp "用户名(默认s5user): " USER
-USER=${USER:-s5user}
-read -rp "密码(默认随机): " PASS
-[[ -z "$PASS" ]] && PASS=$(head -c12 /dev/urandom | base64)
+# 自动生成端口、用户名、密码
+PORT=$((RANDOM%64512+1024))
+USER="s5user"
+PASS=$(head -c12 /dev/urandom | base64)
 
 # 创建 systemd 服务
 SERVICE="/etc/systemd/system/microsocks.service"
