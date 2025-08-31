@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键安装 SOCKS5（最终版）
+# 最终修复版 SOCKS5 安装脚本
 
 set -e
 
@@ -24,10 +24,19 @@ case $ARCH in
 esac
 echo -e "${GREEN}检测架构: $ARCH${RESET}"
 
+# -------------------- 检查 wget/curl --------------------
+if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
+    echo "请先安装 wget 或 curl"
+    exit 1
+fi
+
 # -------------------- 下载 microsocks --------------------
 sudo rm -f /usr/local/bin/microsocks
 echo -e "${GREEN}正在下载 microsocks...${RESET}"
-wget -qO /usr/local/bin/microsocks "$BIN_URL"
+if ! wget -qO /usr/local/bin/microsocks "$BIN_URL"; then
+    echo "wget 下载失败，尝试 curl..."
+    curl -L "$BIN_URL" -o /usr/local/bin/microsocks
+fi
 chmod +x /usr/local/bin/microsocks
 echo -e "${GREEN}microsocks 下载完成${RESET}"
 
@@ -57,8 +66,18 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now microsocks
-echo -e "${GREEN}microsocks 已启动并设置开机自启${RESET}"
+
+# -------------------- 检查是否启动成功 --------------------
+sleep 1
+if systemctl is-active --quiet microsocks; then
+    echo -e "${GREEN}microsocks 已启动并设置开机自启${RESET}"
+else
+    echo -e "${YELLOW}microsocks 启动失败，请检查日志: sudo journalctl -u microsocks -n 20${RESET}"
+fi
 
 # -------------------- 输出 Telegram URL --------------------
 TG_URL="tg://socks?server=$IP&port=$PORT&user=$USER&pass=$PASS"
-echo -e
+echo -e "${GREEN}Telegram Proxy URL:${RESET} $TG_URL"
+
+# -------------------- 停止/卸载提示 --------------------
+echo -e "${YELLOW}停止/卸载 SOCKS5:${RESET} sudo systemctl stop microsocks && sudo systemctl disable microsocks && sudo rm -f /usr/local/bin/microsocks && sudo rm -f $SERVICE_PATH"
