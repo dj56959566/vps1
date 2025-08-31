@@ -1,8 +1,11 @@
 #!/bin/bash
-# 一键 SOCKS5 安装启动 + Telegram Proxy URL + 卸载提示
-# Author: ChatGPT
+# 最终版 SOCKS5 安装启动脚本
+# 功能: LXC/Docker 检测 + 自定义端口/用户名/密码 + Telegram Proxy URL + 卸载提示
 
 set -e
+
+GREEN='\033[0;32m'
+NC='\033[0m'
 
 echo "---------------------------------"
 echo "   一键 SOCKS5 安装 & 启动脚本   "
@@ -10,16 +13,24 @@ echo "---------------------------------"
 
 # ---------- 检测虚拟化环境 ----------
 if grep -qa docker /proc/1/cgroup || grep -qa lxc /proc/1/cgroup; then
-    echo "⚠️ 检测到可能运行在 LXC/Docker 容器中，请确保容器网络允许外部访问端口"
+    echo "⚠️  检测到可能运行在 LXC/Docker 容器中，请确保容器网络允许外部访问端口"
 fi
 
 # ---------- 输入端口 ----------
 read -p "请输入 SOCKS5 端口 (默认 1080): " PORT
 PORT=${PORT:-1080}
 
-# ---------- 自动生成用户名/密码 ----------
-USERNAME="u$(head -c 4 /dev/urandom | xxd -p)"
-PASSWORD="p$(head -c 6 /dev/urandom | xxd -p)"
+# ---------- 输入用户名 ----------
+read -p "请输入用户名 (默认随机): " USERNAME
+if [[ -z "$USERNAME" ]]; then
+    USERNAME="u$(head -c 4 /dev/urandom | xxd -p)"
+fi
+
+# ---------- 输入密码 ----------
+read -p "请输入密码 (默认随机): " PASSWORD
+if [[ -z "$PASSWORD" ]]; then
+    PASSWORD="p$(head -c 6 /dev/urandom | xxd -p)"
+fi
 
 # ---------- 获取公网 IP ----------
 echo "[INFO] 获取公网 IP..."
@@ -59,9 +70,8 @@ echo "📡 地址: $IP:$PORT"
 echo "👤 用户名: $USERNAME"
 echo "🔑 密码: $PASSWORD"
 echo
-echo "👉 Telegram Proxy URL:"
-echo "https://t.me/proxy?server=$IP&port=$PORT&secret=$SECRET_HEX"
+echo -e "👉 Telegram Proxy URL:\n${GREEN}https://t.me/proxy?server=$IP&port=$PORT&secret=$SECRET_HEX${NC}"
 echo "---------------------------------"
-echo "⚠️ 卸载/停止 SOCKS5 最简单命令："
+echo "⚠️ 卸载/停止 SOCKS5 一行命令："
 echo "pkill -f microsocks && rm -f /usr/local/bin/microsocks"
 echo "---------------------------------"
