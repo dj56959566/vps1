@@ -12,9 +12,15 @@ A
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh)
 ```
-B:建议使用此脚本
+B:建议使用此脚本小鸡nat vps kvm
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s.sh)
+
+```
+c:lxc kvm 最终版
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/dj56959566/vps1/main/s.sh)
 
 ```
 ## 项目简介
