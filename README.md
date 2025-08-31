@@ -11,6 +11,10 @@ bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/ha.sh)
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh)
+```
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s.sh)
 
 ```
 ## 项目简介
