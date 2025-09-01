@@ -12,6 +12,12 @@ A
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s5.sh)
 ```
+.内存小于128MB：优先安装microsocks（资源占用最少）
+
+.内存小于256MB：优先安装3proxy（轻量级多功能）
+
+.内存大于等于256MB：优先安装ss5（功能较为完善）
+
 B:建议使用此脚本小鸡nat vps kvm
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/dj56959566/vps1/main/s.sh)
