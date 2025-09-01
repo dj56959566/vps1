@@ -52,11 +52,12 @@ install() {
     echo -e "${CYAN}=== 配置设置 ===${NC}"
     read -p "用户名 [proxy]: " user
     user=${user:-proxy}
-    read -s -p "密码 [自动生成]: " pass
-    echo
+    read -p "密码 [自动生成]: " pass
     if [[ -z "$pass" ]]; then
         pass=$(openssl rand -base64 12 2>/dev/null || date +%s | head -c 12)
         echo -e "${GREEN}生成密码: $pass${NC}"
+    else
+        echo -e "${GREEN}使用密码: $pass${NC}"
     fi
     
     read -p "SOCKS5端口 [1080]: " socks_port
@@ -195,8 +196,7 @@ modify_config() {
     read -p "新用户名 [$current_user]: " new_user
     new_user=${new_user:-$current_user}
     
-    read -s -p "新密码 [不修改]: " new_pass
-    echo
+    read -p "新密码 [不修改]: " new_pass
     
     read -p "新SOCKS5端口 [$socks_port]: " new_socks_port
     new_socks_port=${new_socks_port:-$socks_port}
@@ -284,20 +284,20 @@ EOF
 # 主菜单
 main() {
     show_banner
-    echo -e "${WHITE}1)${NC} 安装3proxy"
-    echo -e "${WHITE}2)${NC} 卸载3proxy" 
-    echo -e "${WHITE}3)${NC} 修改自定义"
-    echo -e "${WHITE}0)${NC} 退出"
+    echo -e "${WHITE}1.安装${NC}"
+    echo -e "${WHITE}2.卸载${NC}" 
+    echo -e "${WHITE}3.修改并自定义${NC}"
+    echo -e "${WHITE}4.退出${NC}"
     echo
     echo -e "${GREEN}By:Djkyc${NC}"
     echo
-    read -p "选择 [0-3]: " choice
+    read -p "选择 [1-4]: " choice
     
     case $choice in
         1) install ;;
         2) uninstall ;;
         3) modify_config ;;
-        0) exit 0 ;;
+        4) exit 0 ;;
         *) echo "无效选择" ;;
     esac
 }
