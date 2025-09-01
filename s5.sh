@@ -2,7 +2,8 @@
 #
 # 交互式 socks5 管理脚本（安装 / 修改 / 卸载）
 # 支持多种VPS环境（LXC、KVM、NAT VPS）和常用Linux发行版
-# 支持多种实现（s5、3proxy、microsocks、ss5、danted）
+# 优先使用资源占用最少的内核（microsocks、3proxy）
+# 根据内存大小自动选择最适合的内核
 # 安装并启动后会自动检测本机公网 IP（若不可用则回退本地 IP），并输出：
 #  - socks://user:pass@IP:PORT
 #  - Telegram 快链：https://t.me/socks?server=IP&port=PORT&user=USER&pass=PASS
@@ -22,22 +23,18 @@ echo -e "${GREEN}
  \\___ \\| | | | |   | ' /\\___ \\___ \\ 
   ___) | |_| | |___| . \\ ___) |__) |           不要直连
  |____/ \\___/ \\____|_|\\_\\____/____/            没有售后   
- 多系统多内核版
+ 轻量级版 - 仅包含microsocks和3proxy
 ${RESET}"
 
 WORKDIR="${HOME:-/root}/.s5_manager"
 PID_FILE="${WORKDIR}/s5.pid"
 META_FILE="${WORKDIR}/meta.env"
-CONFIG_S5="${WORKDIR}/config.json"
 CONFIG_3PROXY="${WORKDIR}/3proxy.cfg"
-# singbox备用下载链接
-SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.7.0/sing-box-1.7.0-linux-amd64.tar.gz"
-SINGBOX_BIN="${WORKDIR}/sing-box"
 DEFAULT_PORT=1080
 DEFAULT_USER="s5user"
 
-# 按资源占用从少到多排序的实现（只保留三个最轻量级的内核）
-PREFERRED_IMPLS=("microsocks" "3proxy" "ss5")
+# 按资源占用从少到多排序的实现（只保留两个最轻量级的内核）
+PREFERRED_IMPLS=("microsocks" "3proxy")
 
 # 检测VPS类型和配置
 detect_vps_type() {
@@ -92,14 +89,10 @@ detect_vps_type() {
   if [[ "$mem_total" =~ ^[0-9]+$ ]] && [ "$mem_total" -lt 128 ]; then
     echo "microsocks (超低内存环境)"
     export RECOMMENDED_KERNEL="microsocks"
-  # 如果内存小于256MB，推荐3proxy
-  elif [[ "$mem_total" =~ ^[0-9]+$ ]] && [ "$mem_total" -lt 256 ]; then
-    echo "3proxy (低内存环境)"
-    export RECOMMENDED_KERNEL="3proxy"
-  # 如果内存大于等于256MB，推荐ss5
+  # 如果内存大于等于128MB，推荐3proxy
   else
-    echo "ss5 (标准环境)"
-    export RECOMMENDED_KERNEL="ss5"
+    echo "3proxy (标准环境)"
+    export RECOMMENDED_KERNEL="3proxy"
   fi
   
   return 0
@@ -212,13 +205,6 @@ random_pass() {
 }
 
 detect_existing_impl() {
-  # 首先检查是否有singbox作为备用
-  if [ -f "${SINGBOX_BIN}" ]; then
-    echo "singbox"
-    return 0
-  fi
-  
-  # 然后按资源占用从少到多检查其他实现
   for impl in "${PREFERRED_IMPLS[@]}"; do
     case "${impl}" in
       3proxy)
@@ -230,18 +216,6 @@ detect_existing_impl() {
       microsocks)
         if command -v microsocks >/dev/null 2>&1; then
           echo "microsocks"
-          return 0
-        fi
-        ;;
-      ss5)
-        if command -v ss5 >/dev/null 2>&1; then
-          echo "ss5"
-          return 0
-        fi
-        ;;
-      danted|sockd)
-        if command -v sockd >/dev/null 2>&1 || command -v danted >/dev/null 2>&1; then
-          echo "danted"
           return 0
         fi
         ;;
@@ -359,47 +333,6 @@ try_install_microsocks() {
   fi
 }
 
-try_install_ss5() {
-  echo "尝试通过包管理器安装 ss5..."
-  try_install_package "ss5" && return 0
-  return 1
-}
-
-try_install_danted() {
-  echo "尝试通过包管理器安装 dante-server..."
-  try_install_package "dante-server" && return 0
-  return 1
-}
-
-# 下载singbox作为备用
-download_singbox() {
-  echo "下载备用 sing-box 到 ${SINGBOX_BIN} ..."
-  local tempdir=$(mktemp -d)
-  local tempfile="${tempdir}/singbox.tar.gz"
-  
-  # 下载singbox
-  curl -L -sS -o "${tempfile}" "${SINGBOX_URL}" || return 1
-  
-  # 解压
-  tar -xzf "${tempfile}" -C "${tempdir}"
-  
-  # 查找可执行文件并复制
-  find "${tempdir}" -name "sing-box" -type f -exec cp {} "${SINGBOX_BIN}" \;
-  
-  # 设置权限
-  chmod 700 "${SINGBOX_BIN}"
-  
-  # 清理临时文件
-  rm -rf "${tempdir}"
-  
-  # 检查是否成功
-  if [ -f "${SINGBOX_BIN}" ]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
 generate_3proxy_cfg() {
   local port="$1" user="$2" pass="$3" cfg="${CONFIG_3PROXY}"
   cat > "${cfg}" <<EOF
@@ -412,46 +345,6 @@ users ${user}:CL:${pass}
 auth strong
 allow ${user}
 socks -p${port}
-EOF
-  chmod 600 "${cfg}"
-  echo "${cfg}"
-}
-
-generate_singbox_json() {
-  local port="$1" user="$2" pass="$3" cfg="${CONFIG_S5}"
-  cat > "${cfg}" <<EOF
-{
-  "log": {
-    "access": "/dev/null",
-    "error": "/dev/null",
-    "loglevel": "none"
-  },
-  "inbounds": [
-    {
-      "port": ${port},
-      "protocol": "socks",
-      "tag": "socks",
-      "settings": {
-        "auth": "password",
-        "udp": false,
-        "ip": "0.0.0.0",
-        "userLevel": 0,
-        "accounts": [
-          {
-            "user": "${user}",
-            "pass": "${pass}"
-          }
-        ]
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "tag": "direct",
-      "protocol": "freedom"
-    }
-  ]
-}
 EOF
   chmod 600 "${cfg}"
   echo "${cfg}"
@@ -533,22 +426,9 @@ start_by_type() {
       nohup 3proxy "${cfg}" >/dev/null 2>&1 &
       echo "$!" > "${PID_FILE}"
       ;;
-    singbox)
-      generate_singbox_json "${PORT}" "${USERNAME}" "${PASSWORD}" >/dev/null
-      nohup "${SINGBOX_BIN}" run -c "${CONFIG_S5}" >/dev/null 2>&1 &
-      echo "$!" > "${PID_FILE}"
-      ;;
     microsocks)
       nohup microsocks -p "${PORT}" -u "${USERNAME}" -P "${PASSWORD}" >/dev/null 2>&1 &
       echo "$!" > "${PID_FILE}"
-      ;;
-    ss5)
-      nohup ss5 -u "${USERNAME}:${PASSWORD}" -p "${PORT}" >/dev/null 2>&1 &
-      echo "$!" > "${PID_FILE}"
-      ;;
-    danted)
-      echo -e "${YELLOW}检测到 danted/sockd，脚本不会自动生成完整服务配置。请手动配置并启动 danted。${RESET}"
-      return 1
       ;;
     *)
       echo -e "${RED}未知实现类型：${type}${RESET}"
@@ -576,7 +456,7 @@ stop_socks() {
       rm -f "${PID_FILE}" || true
     fi
   fi
-  for p in sing-box 3proxy microsocks ss5 danted sockd; do
+  for p in 3proxy microsocks; do
     if pgrep -x "${p}" >/dev/null 2>&1; then
       pkill -x "${p}" || true
     fi
@@ -757,7 +637,7 @@ install_flow() {
           echo "microsocks安装失败，已安装备选的3proxy"
         fi
       fi
-    elif [ "${RECOMMENDED_KERNEL}" = "3proxy" ]; then
+    else
       echo "VPS配置适中，优先安装轻量级的3proxy..."
       if try_install_3proxy; then
         if command -v 3proxy >/dev/null 2>&1; then
@@ -770,37 +650,13 @@ install_flow() {
           echo "3proxy安装失败，已安装备选的microsocks"
         fi
       fi
-    else
-      echo "VPS配置良好，优先安装功能完善的ss5..."
-      if try_install_ss5; then
-        if command -v ss5 >/dev/null 2>&1; then
-          BIN_TYPE="ss5"
-          echo "已安装 ss5"
-        fi
-      elif try_install_3proxy; then
-        if command -v 3proxy >/dev/null 2>&1; then
-          BIN_TYPE="3proxy"
-          echo "ss5安装失败，已安装备选的3proxy"
-        fi
-      elif try_install_microsocks; then
-        if command -v microsocks >/dev/null 2>&1; then
-          BIN_TYPE="microsocks"
-          echo "ss5和3proxy安装失败，已安装备选的microsocks"
-        fi
-      fi
     fi
   fi
 
-  # 如果所有尝试都失败，使用singbox作为备用
+  # 如果所有尝试都失败，提示错误
   if [ -z "${BIN_TYPE}" ]; then
-    echo "尝试下载备用的sing-box作为SOCKS5实现..."
-    if download_singbox; then
-      BIN_TYPE="singbox"
-      echo "使用下载的备用 sing-box（已保存到 ${SINGBOX_BIN}）"
-    else
-      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 microsocks/3proxy/ss5，或检查网络。${RESET}"
-      return 1
-    fi
+    echo -e "${RED}未能安装任何 socks5 实现。请检查系统环境或手动安装 microsocks/3proxy。${RESET}"
+    return 1
   fi
 
   save_meta
@@ -826,113 +682,4 @@ modify_flow() {
     echo "端口无效，保留原值"
     NEW_PORT="${PORT}"
   fi
-  prompt "新的用户名（回车保留当前: ${USERNAME:-unset})" "${USERNAME:-${DEFAULT_USER}}" NEW_USER
-  prompt "新的密码（留空则自动生成）" "" NEW_PASS
-  if [ -z "${NEW_PASS}" ]; then
-    NEW_PASS="$(random_pass)"
-    echo "已生成新密码：${NEW_PASS}"
-  fi
-
-  PORT="${NEW_PORT}"
-  USERNAME="${NEW_USER}"
-  PASSWORD="${NEW_PASS}"
-
-  save_meta
-  echo "正在重启代理以应用修改..."
-  stop_socks
-  start_by_type "${BIN_TYPE}" || { echo "重启失败，请检查日志"; return 1; }
-  echo -e "${GREEN}修改并重启完成。${RESET}"
-  return 0
-}
-
-uninstall_flow() {
-  ensure_workdir
-  echo -e "${YELLOW}卸载将停止代理并删除目录：${WORKDIR}。此操作不可恢复。${RESET}"
-  prompt "确认卸载并删除所有文件？输入 Y 确认" "N" CONFIRM
-  if [ "${CONFIRM}" != "Y" ]; then
-    echo "已取消卸载。"
-    return 0
-  fi
-  stop_socks
-  rm -rf "${WORKDIR}" && echo "已删除 ${WORKDIR}" || echo "删除 ${WORKDIR} 时出错或该目录不存在。"
-  return 0
-}
-
-status_flow() {
-  ensure_workdir
-  load_meta
-  if [ -f "${PID_FILE}" ]; then
-    pid="$(cat "${PID_FILE}")"
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      echo -e "${GREEN}socks5 正在运行，PID=${pid}${RESET}"
-    else
-      echo -e "${YELLOW}PID 文件存在但进程未运行。${RESET}"
-    fi
-  else
-    if pgrep -x s5 >/dev/null 2>&1 || pgrep -x 3proxy >/dev/null 2>&1; then
-      echo -e "${GREEN}检测到 socks5 相关进程在运行（但无 PID 文件）。${RESET}"
-    else
-      echo -e "${YELLOW}未检测到 socks5 运行。${RESET}"
-    fi
-  fi
-  if [ -f "${META_FILE}" ]; then
-    echo "当前配置："
-    sed -n '1,3p' "${META_FILE}" || true
-  else
-    echo "未找到配置（meta）。"
-  fi
-}
-
-main_menu() {
-  while true; do
-    echo
-    echo "请选择操作："
-    echo "1) 安装 socks5"
-    echo "2) 修改 socks5 配置"
-    echo "3) 卸载 socks5"
-    echo "4) 状态"
-    echo "5) 检测环境"
-    echo "6) 系统优化"
-    echo "7) 退出"
-    read -r -p "请选择 (1-7): " opt < /dev/tty || opt="7"
-    case "${opt}" in
-      1) install_flow ;;
-      2) modify_flow ;;
-      3) uninstall_flow ;;
-      4) status_flow ;;
-      5) check_environment ;;
-      6) optimize_system ;;
-      7) echo "退出。"; exit 0 ;;
-      *) echo "无效选项。" ;;
-    esac
-  done
-}
-
-# 检查脚本是否以root权限运行
-check_root() {
-  if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${RED}错误: 此脚本需要root权限运行${RESET}"
-    echo "请使用sudo或以root用户身份运行此脚本"
-    exit 1
-  fi
-}
-
-# 主程序入口
-main() {
-  # 显示欢迎信息
-  echo -e "${GREEN}欢迎使用SOCKS5代理管理脚本${RESET}"
-  echo -e "${GREEN}此脚本支持LXC、KVM和NAT VPS等常用系统环境${RESET}"
-  
-  # 检查root权限
-  check_root
-  
-  # 初始化工作目录和配置
-  ensure_workdir
-  load_meta
-  
-  # 显示主菜单
-  main_menu
-}
-
-# 执行主程序
-main
+  prompt "新的用户名（回车保留当前: ${USERNAME:-unset})" "${USERNAME:-${DEFAULT_USER}}" NEW_
