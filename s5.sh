@@ -37,6 +37,59 @@ get_ip() {
     echo "$ip"
 }
 
+# 系统检查
+check_system() {
+    echo -e "${BLUE}检查系统环境...${NC}"
+    
+    # 检查磁盘空间
+    local available_space=$(df /tmp | tail -1 | awk '{print $4}')
+    if [[ $available_space -lt 100000 ]]; then  # 小于100MB
+        echo -e "${RED}错误: 磁盘空间不足 (可用: ${available_space}KB)${NC}"
+        echo -e "${YELLOW}正在清理系统缓存...${NC}"
+        
+        # 清理APT缓存
+        apt-get clean >/dev/null 2>&1 || true
+        apt-get autoclean >/dev/null 2>&1 || true
+        
+        # 清理临时文件
+        rm -rf /tmp/3proxy* /tmp/*.tar.gz >/dev/null 2>&1 || true
+        
+        # 清理日志文件
+        journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+        
+        # 再次检查空间
+        available_space=$(df /tmp | tail -1 | awk '{print $4}')
+        if [[ $available_space -lt 50000 ]]; then  # 小于50MB
+            echo -e "${RED}清理后仍然空间不足，需要至少50MB空间${NC}"
+            echo "请手动清理磁盘空间后重试"
+            return 1
+        else
+            echo -e "${GREEN}清理完成，可用空间: ${available_space}KB${NC}"
+        fi
+    fi
+    
+    # 检查必要命令
+    local missing_cmds=()
+    for cmd in wget tar make gcc; do
+        if ! command -v $cmd >/dev/null 2>&1; then
+            missing_cmds+=($cmd)
+        fi
+    done
+    
+    if [[ ${#missing_cmds[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}缺少命令: ${missing_cmds[*]}${NC}"
+        return 1
+    fi
+    
+    # 检查端口占用
+    if [[ -n "$1" ]] && netstat -tlnp 2>/dev/null | grep -q ":$1 "; then
+        echo -e "${YELLOW}警告: 端口 $1 已被占用${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
 # 安装
 install() {
     show_banner
@@ -64,24 +117,112 @@ install() {
     socks_port=${socks_port:-1080}
     http_port=3128
     
+    # 显示磁盘空间
+    echo -e "${CYAN}磁盘空间检查:${NC}"
+    df -h / | tail -1 | awk '{print "根分区: " $3 " 已用, " $4 " 可用, " $5 " 使用率"}'
+    df -h /tmp | tail -1 | awk '{print "临时目录: " $3 " 已用, " $4 " 可用, " $5 " 使用率"}'
+    echo
+    
+    # 检查系统环境
+    if ! check_system "$socks_port"; then
+        echo -e "${YELLOW}继续安装? [y/N]: ${NC}"
+        read -r continue_install
+        if [[ ! "$continue_install" =~ ^[Yy]$ ]]; then
+            echo "安装已取消"
+            return
+        fi
+    fi
+    
     # 安装依赖
     echo -e "${BLUE}[1/3]${NC} 安装编译依赖..."
     if command -v apt-get >/dev/null; then
-        apt-get update -qq && apt-get install -y -qq build-essential wget make gcc curl
+        echo "清理APT缓存..."
+        apt-get clean >/dev/null 2>&1 || true
+        
+        echo "修复APT依赖问题..."
+        apt --fix-broken install -y >/dev/null 2>&1 || true
+        dpkg --configure -a >/dev/null 2>&1 || true
+        
+        # 检查是否已安装必要工具
+        local need_install=false
+        for cmd in gcc make wget curl; do
+            if ! command -v $cmd >/dev/null 2>&1; then
+                need_install=true
+                break
+            fi
+        done
+        
+        if [[ "$need_install" == "true" ]]; then
+            echo "更新软件包列表..."
+            if ! apt-get update -qq 2>/dev/null; then
+                echo -e "${YELLOW}警告: 软件源更新失败，尝试使用现有包...${NC}"
+            fi
+            
+            echo "安装编译工具..."
+            if ! apt-get install -y -qq gcc make wget curl 2>/dev/null; then
+                echo -e "${YELLOW}尝试最小化安装...${NC}"
+                apt-get install -y -qq --no-install-recommends gcc make wget curl 2>/dev/null || {
+                    echo -e "${RED}错误: 无法安装编译依赖，磁盘空间不足${NC}"
+                    echo "请清理磁盘空间后重试"
+                    exit 1
+                }
+            fi
+        else
+            echo -e "${GREEN}编译工具已安装${NC}"
+        fi
     elif command -v yum >/dev/null; then
         yum install -y -q gcc make wget curl
     fi
     
     # 编译3proxy
     echo -e "${BLUE}[2/3]${NC} 编译3proxy内核..."
-    cd /tmp
-    wget -q https://github.com/z3APA3A/3proxy/archive/0.9.4.tar.gz
-    tar -xf 0.9.4.tar.gz >/dev/null 2>&1
+    
+    # 使用/var/tmp作为工作目录（通常有更多空间）
+    WORK_DIR="/var/tmp"
+    if [[ $(df $WORK_DIR | tail -1 | awk '{print $4}') -lt $(df /tmp | tail -1 | awk '{print $4}') ]]; then
+        WORK_DIR="/tmp"
+    fi
+    
+    cd $WORK_DIR
+    
+    # 清理旧文件
+    rm -rf 3proxy-0.9.4* 2>/dev/null || true
+    
+    echo "下载3proxy源码..."
+    if ! wget -q --timeout=30 https://github.com/z3APA3A/3proxy/archive/0.9.4.tar.gz; then
+        echo -e "${RED}错误: 下载3proxy源码失败${NC}"
+        echo "请检查网络连接"
+        exit 1
+    fi
+    
+    echo "解压源码..."
+    if ! tar -xf 0.9.4.tar.gz >/dev/null 2>&1; then
+        echo -e "${RED}错误: 解压源码失败${NC}"
+        rm -f 0.9.4.tar.gz
+        exit 1
+    fi
+    
+    # 删除压缩包节省空间
+    rm -f 0.9.4.tar.gz
+    
     cd 3proxy-0.9.4
-    make -f Makefile.Linux >/dev/null 2>&1
+    echo "编译3proxy..."
+    if ! make -f Makefile.Linux >/dev/null 2>&1; then
+        echo -e "${RED}错误: 编译3proxy失败${NC}"
+        echo "请检查编译环境是否完整"
+        cd ..
+        rm -rf 3proxy-0.9.4
+        exit 1
+    fi
+    
+    echo "安装3proxy..."
     mkdir -p /usr/local/etc/3proxy /usr/local/bin /var/log/3proxy
     cp bin/3proxy bin/mycrypt /usr/local/bin/
     chmod +x /usr/local/bin/3proxy /usr/local/bin/mycrypt
+    
+    # 清理编译文件
+    cd ..
+    rm -rf 3proxy-0.9.4
     
     # 配置3proxy
     echo -e "${BLUE}[3/3]${NC} 配置3proxy服务..."
@@ -126,11 +267,24 @@ WantedBy=multi-user.target
 EOF
     
     # 启动服务
+    echo "启动3proxy服务..."
     systemctl daemon-reload
     systemctl enable 3proxy >/dev/null 2>&1
-    systemctl start 3proxy
+    
+    if ! systemctl start 3proxy; then
+        echo -e "${RED}错误: 3proxy服务启动失败${NC}"
+        echo "检查配置文件..."
+        journalctl -u 3proxy --no-pager -n 10
+        exit 1
+    fi
     
     sleep 2
+    
+    # 验证服务状态
+    if ! systemctl is-active 3proxy >/dev/null 2>&1; then
+        echo -e "${RED}错误: 3proxy服务未正常运行${NC}"
+        exit 1
+    fi
     
     # 获取IP并输出连接信息
     ip=$(get_ip)
