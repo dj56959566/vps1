@@ -346,23 +346,264 @@ EOF
     read -p "按回车键继续..."
 }
 
+# 网络诊断和修复
+network_fix() {
+    show_banner
+    echo -e "${YELLOW}网络诊断和修复${NC}"
+    echo
+    
+    # 检查当前配置
+    if [[ ! -f /usr/local/etc/3proxy/3proxy.cfg ]]; then
+        echo -e "${RED}错误: 3proxy未安装${NC}"
+        read -p "按回车键继续..."
+        return
+    fi
+    
+    socks_port=$(grep "socks -p" /usr/local/etc/3proxy/3proxy.cfg | sed 's/socks -p//')
+    current_user=$(head -1 /usr/local/etc/3proxy/passwd 2>/dev/null | cut -d: -f1)
+    
+    echo -e "${CYAN}=== 网络诊断 ===${NC}"
+    
+    # 1. 检查端口监听
+    echo -e "${BLUE}1. 检查端口监听...${NC}"
+    if ss -tlnp | grep ":$socks_port " >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 端口 $socks_port 正在监听${NC}"
+    else
+        echo -e "${RED}✗ 端口 $socks_port 未监听${NC}"
+        echo "尝试重启3proxy..."
+        systemctl restart 3proxy 2>/dev/null || /usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg &
+        sleep 2
+    fi
+    
+    # 2. 检查防火墙
+    echo -e "${BLUE}2. 检查防火墙设置...${NC}"
+    if command -v ufw >/dev/null 2>&1; then
+        if ufw status | grep -q "Status: active"; then
+            echo -e "${YELLOW}UFW防火墙已启用${NC}"
+            echo "添加端口规则..."
+            ufw allow $socks_port/tcp >/dev/null 2>&1
+            echo -e "${GREEN}✓ 已添加端口 $socks_port 到UFW${NC}"
+        else
+            echo -e "${GREEN}✓ UFW防火墙未启用${NC}"
+        fi
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        if firewall-cmd --state >/dev/null 2>&1; then
+            echo -e "${YELLOW}firewalld已启用${NC}"
+            echo "添加端口规则..."
+            firewall-cmd --permanent --add-port=$socks_port/tcp >/dev/null 2>&1
+            firewall-cmd --reload >/dev/null 2>&1
+            echo -e "${GREEN}✓ 已添加端口 $socks_port 到firewalld${NC}"
+        else
+            echo -e "${GREEN}✓ firewalld未启用${NC}"
+        fi
+    elif command -v iptables >/dev/null 2>&1; then
+        echo -e "${YELLOW}检查iptables规则...${NC}"
+        if ! iptables -L INPUT | grep -q "$socks_port"; then
+            echo "添加iptables规则..."
+            iptables -I INPUT -p tcp --dport $socks_port -j ACCEPT 2>/dev/null
+            echo -e "${GREEN}✓ 已添加iptables规则${NC}"
+        else
+            echo -e "${GREEN}✓ iptables规则已存在${NC}"
+        fi
+    else
+        echo -e "${GREEN}✓ 未检测到防火墙${NC}"
+    fi
+    
+    # 3. 检查网络连通性
+    echo -e "${BLUE}3. 检查网络连通性...${NC}"
+    if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 外网连接正常${NC}"
+    else
+        echo -e "${RED}✗ 外网连接异常${NC}"
+    fi
+    
+    # 4. 优化3proxy配置用于LXC环境
+    echo -e "${BLUE}4. 优化LXC环境配置...${NC}"
+    echo -e "${YELLOW}保持现有端口 $socks_port 不变${NC}"
+    
+    # 停止服务
+    systemctl stop 3proxy 2>/dev/null || true
+    pkill -f "3proxy" 2>/dev/null || true
+    sleep 1
+    
+    # 创建优化的配置文件 - 保持原端口
+    cat > /usr/local/etc/3proxy/3proxy.cfg << EOF
+# 3proxy配置 - LXC优化版 (保持端口$socks_port)
+nserver 8.8.8.8
+nserver 1.1.1.1
+nscache 65536
+timeouts 1 5 30 60 180 1800 15 60
+log /var/log/3proxy/3proxy.log D
+rotate 30
+
+# 网络优化
+maxconn 1000
+stacksize 65536
+
+# 用户认证
+users $/usr/local/etc/3proxy/passwd
+auth strong
+allow $current_user
+deny *
+
+# SOCKS5代理 - 监听所有接口，保持原端口
+socks -i0.0.0.0 -p$socks_port
+EOF
+    
+    echo -e "${GREEN}✓ 已优化配置文件 (端口保持 $socks_port)${NC}"
+    
+    # 5. 重启服务
+    echo -e "${BLUE}5. 重启3proxy服务...${NC}"
+    cd /usr/local/etc/3proxy
+    
+    if systemctl start 3proxy 2>/dev/null; then
+        sleep 2
+        if pgrep -f "3proxy" >/dev/null; then
+            echo -e "${GREEN}✓ 服务重启成功${NC}"
+        else
+            echo -e "${YELLOW}systemctl异常，使用直接启动${NC}"
+            /usr/local/bin/3proxy 3proxy.cfg &
+            sleep 2
+        fi
+    else
+        echo -e "${YELLOW}使用直接启动${NC}"
+        /usr/local/bin/3proxy 3proxy.cfg &
+        sleep 2
+    fi
+    
+    # 6. 最终验证
+    echo -e "${BLUE}6. 验证修复结果...${NC}"
+    if pgrep -f "3proxy" >/dev/null && ss -tlnp | grep ":$socks_port " >/dev/null; then
+        echo -e "${GREEN}✓ 3proxy运行正常${NC}"
+        
+        # 显示连接信息
+        ip=$(get_ip)
+        echo
+        current_pass=$(head -1 /usr/local/etc/3proxy/passwd 2>/dev/null | cut -d: -f2)
+        
+        echo -e "${CYAN}=== 修复后连接信息 ===${NC}"
+        echo -e "${WHITE}服务器IP:${NC} ${GREEN}$ip${NC}"
+        echo -e "${WHITE}用户名:${NC} ${GREEN}$current_user${NC}"
+        echo -e "${WHITE}密码:${NC} ${GREEN}$current_pass${NC}"
+        echo -e "${WHITE}SOCKS5端口:${NC} ${GREEN}$socks_port${NC} ${YELLOW}(保持不变)${NC}"
+        echo -e "${WHITE}监听地址:${NC} ${GREEN}0.0.0.0:$socks_port${NC}"
+        echo
+        echo -e "${WHITE}SOCKS5 连接:${NC}"
+        echo -e "  • ${YELLOW}socks://${current_user}:${current_pass}@${ip}:${socks_port}${NC}"
+        echo
+        echo -e "${WHITE}Telegram 快链:${NC}"
+        echo -e "  • ${BLUE}https://t.me/socks?server=${ip}&port=${socks_port}&user=${current_user}&pass=${current_pass}${NC}"
+        echo
+        echo -e "${YELLOW}LXC环境TG连接建议:${NC}"
+        echo "1. 使用服务器IP: $ip"
+        echo "2. 端口: $socks_port (已保持您的特定端口)"
+        echo "3. 协议: SOCKS5"
+        echo "4. 已优化监听所有网络接口"
+        echo "5. 如仍无法连接，请检查VPS提供商防火墙策略"
+        
+    else
+        echo -e "${RED}✗ 修复失败，请检查系统日志${NC}"
+        journalctl -u 3proxy --no-pager -n 10 2>/dev/null || echo "无systemd日志"
+    fi
+    
+    echo
+    read -p "按回车键继续..."
+}
+
+# 查看状态
+check_status() {
+    show_banner
+    echo -e "${YELLOW}3proxy运行状态${NC}"
+    echo
+    
+    # 检查进程
+    if pgrep -f "3proxy" >/dev/null; then
+        echo -e "${GREEN}✓ 3proxy进程运行中${NC}"
+        
+        # 显示进程信息
+        echo -e "${CYAN}进程信息:${NC}"
+        ps aux | grep 3proxy | grep -v grep
+        echo
+        
+        # 显示端口监听
+        echo -e "${CYAN}端口监听:${NC}"
+        ss -tlnp | grep 3proxy || netstat -tlnp | grep 3proxy
+        echo
+        
+        # 显示配置信息
+        if [[ -f /usr/local/etc/3proxy/3proxy.cfg ]]; then
+            echo -e "${CYAN}当前配置:${NC}"
+            socks_port=$(grep "socks -p" /usr/local/etc/3proxy/3proxy.cfg | sed 's/socks -p//')
+            current_user=$(head -1 /usr/local/etc/3proxy/passwd 2>/dev/null | cut -d: -f1)
+            current_pass=$(head -1 /usr/local/etc/3proxy/passwd 2>/dev/null | cut -d: -f2)
+            
+            echo -e "${WHITE}用户名:${NC} ${GREEN}$current_user${NC}"
+            echo -e "${WHITE}SOCKS5端口:${NC} ${GREEN}$socks_port${NC}"
+            echo
+            
+            # 显示连接信息
+            ip=$(get_ip)
+            echo -e "${CYAN}=== 连接信息 ===${NC}"
+            echo -e "${WHITE}服务器IP:${NC} ${GREEN}$ip${NC}"
+            echo -e "${WHITE}用户名:${NC} ${GREEN}$current_user${NC}"
+            echo -e "${WHITE}密码:${NC} ${GREEN}$current_pass${NC}"
+            echo
+            echo -e "${WHITE}SOCKS5 连接:${NC}"
+            echo -e "  • ${YELLOW}socks://${current_user}:${current_pass}@${ip}:${socks_port}${NC}"
+            echo
+            echo -e "${WHITE}Telegram 快链:${NC}"
+            echo -e "  • ${BLUE}https://t.me/socks?server=${ip}&port=${socks_port}&user=${current_user}&pass=${current_pass}${NC}"
+            echo
+        fi
+        
+        # 显示systemd状态
+        echo -e "${CYAN}服务状态:${NC}"
+        systemctl status 3proxy --no-pager -l 2>/dev/null || echo "systemd服务未配置"
+        
+    else
+        echo -e "${RED}✗ 3proxy进程未运行${NC}"
+        
+        # 检查服务状态
+        if systemctl is-enabled 3proxy >/dev/null 2>&1; then
+            echo -e "${YELLOW}systemd服务已配置但未运行${NC}"
+            echo "尝试启动服务..."
+            systemctl start 3proxy
+            sleep 2
+            if pgrep -f "3proxy" >/dev/null; then
+                echo -e "${GREEN}✓ 服务启动成功${NC}"
+            else
+                echo -e "${RED}✗ 服务启动失败${NC}"
+            fi
+        else
+            echo -e "${YELLOW}3proxy未安装或服务未配置${NC}"
+        fi
+    fi
+    
+    echo
+    read -p "按回车键继续..."
+}
+
 # 主菜单
 main() {
     show_banner
     echo -e "${WHITE}1.安装${NC}"
     echo -e "${WHITE}2.卸载${NC}" 
     echo -e "${WHITE}3.修改并自定义${NC}"
-    echo -e "${WHITE}4.退出${NC}"
+    echo -e "${WHITE}4.查看状态${NC}"
+    echo -e "${WHITE}5.网络修复${NC}"
+    echo -e "${WHITE}6.退出${NC}"
     echo
     echo -e "${GREEN}By:Djkyc${NC}"
     echo
-    read -p "选择 [1-4]: " choice
+    read -p "选择 [1-6]: " choice
     
     case $choice in
         1) install ;;
         2) uninstall ;;
         3) modify_config ;;
-        4) exit 0 ;;
+        4) check_status ;;
+        5) network_fix ;;
+        6) exit 0 ;;
         *) echo "无效选择" ;;
     esac
 }
