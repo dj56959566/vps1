@@ -30,61 +30,79 @@ PID_FILE="${WORKDIR}/s5.pid"
 META_FILE="${WORKDIR}/meta.env"
 CONFIG_S5="${WORKDIR}/config.json"
 CONFIG_3PROXY="${WORKDIR}/3proxy.cfg"
-FALLBACK_S5_URL="https://github.com/eooce/test/releases/download/freebsd/web"
-FALLBACK_S5_BIN="${WORKDIR}/s5_fallback"
+# singbox备用下载链接
+SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.7.0/sing-box-1.7.0-linux-amd64.tar.gz"
+SINGBOX_BIN="${WORKDIR}/sing-box"
 DEFAULT_PORT=1080
 DEFAULT_USER="s5user"
 
-# 按资源占用从少到多排序的实现
-PREFERRED_IMPLS=("microsocks" "3proxy" "ss5" "danted" "sockd")
+# 按资源占用从少到多排序的实现（只保留三个最轻量级的内核）
+PREFERRED_IMPLS=("microsocks" "3proxy" "ss5")
 
-# 检测VPS类型
+# 检测VPS类型和配置
 detect_vps_type() {
-  echo -e "${GREEN}正在检测VPS类型...${RESET}"
+  echo -e "${GREEN}正在检测VPS类型和配置...${RESET}"
+  
+  # 检测虚拟化类型
+  local vps_type="未知"
   
   # 检测是否为LXC
   if grep -q "lxc" /proc/1/cgroup 2>/dev/null || grep -q "container=lxc" /proc/1/environ 2>/dev/null; then
-    echo "LXC容器"
-    return
-  fi
-  
+    vps_type="LXC容器"
   # 检测是否为Docker
-  if grep -q "docker" /proc/1/cgroup 2>/dev/null || [ -f /.dockerenv ]; then
-    echo "Docker容器"
-    return
-  fi
-  
+  elif grep -q "docker" /proc/1/cgroup 2>/dev/null || [ -f /.dockerenv ]; then
+    vps_type="Docker容器"
   # 检测是否为OpenVZ
-  if [ -d /proc/vz ] || grep -q "envID" /proc/self/status 2>/dev/null; then
-    echo "OpenVZ容器"
-    return
-  fi
-  
+  elif [ -d /proc/vz ] || grep -q "envID" /proc/self/status 2>/dev/null; then
+    vps_type="OpenVZ容器"
   # 检测是否为KVM
-  if grep -q "kvm" /proc/cpuinfo 2>/dev/null; then
-    echo "KVM虚拟机"
-    return
-  fi
-  
+  elif grep -q "kvm" /proc/cpuinfo 2>/dev/null; then
+    vps_type="KVM虚拟机"
   # 检测是否为Xen
-  if grep -q "xen" /proc/cpuinfo 2>/dev/null; then
-    echo "Xen虚拟机"
-    return
-  fi
-  
+  elif grep -q "xen" /proc/cpuinfo 2>/dev/null; then
+    vps_type="Xen虚拟机"
   # 检测是否为VMware
-  if dmidecode 2>/dev/null | grep -q "VMware"; then
-    echo "VMware虚拟机"
-    return
-  fi
-  
+  elif dmidecode 2>/dev/null | grep -q "VMware"; then
+    vps_type="VMware虚拟机"
   # 检测是否为物理机
-  if [ -d /sys/firmware/efi ]; then
-    echo "物理服务器(EFI)"
-    return
+  elif [ -d /sys/firmware/efi ]; then
+    vps_type="物理服务器(EFI)"
+  else
+    vps_type="未知虚拟化环境"
   fi
   
-  echo "未知虚拟化环境"
+  echo "VPS类型: $vps_type"
+  
+  # 检测CPU核心数
+  local cpu_cores=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo "未知")
+  echo "CPU核心数: $cpu_cores"
+  
+  # 检测内存大小
+  local mem_total=$(free -m | awk '/Mem:/ {print $2}' 2>/dev/null || echo "未知")
+  echo "内存大小: ${mem_total}MB"
+  
+  # 检测磁盘空间
+  local disk_space=$(df -h / | awk 'NR==2 {print $2}' 2>/dev/null || echo "未知")
+  echo "磁盘空间: $disk_space"
+  
+  # 根据配置推荐最适合的内核
+  echo -n "推荐内核: "
+  
+  # 如果内存小于128MB，推荐microsocks
+  if [[ "$mem_total" =~ ^[0-9]+$ ]] && [ "$mem_total" -lt 128 ]; then
+    echo "microsocks (超低内存环境)"
+    export RECOMMENDED_KERNEL="microsocks"
+  # 如果内存小于256MB，推荐3proxy
+  elif [[ "$mem_total" =~ ^[0-9]+$ ]] && [ "$mem_total" -lt 256 ]; then
+    echo "3proxy (低内存环境)"
+    export RECOMMENDED_KERNEL="3proxy"
+  # 如果内存大于等于256MB，推荐ss5
+  else
+    echo "ss5 (标准环境)"
+    export RECOMMENDED_KERNEL="ss5"
+  fi
+  
+  return 0
 }
 
 # 检测系统类型
@@ -558,11 +576,101 @@ stop_socks() {
       rm -f "${PID_FILE}" || true
     fi
   fi
-  for p in s5 3proxy microsocks ss5 danted sockd; do
+  for p in sing-box 3proxy microsocks ss5 danted sockd; do
     if pgrep -x "${p}" >/dev/null 2>&1; then
       pkill -x "${p}" || true
     fi
   done
+}
+
+# 系统优化函数
+optimize_system() {
+  echo -e "${GREEN}正在优化系统性能...${RESET}"
+  
+  # 检查是否为root用户
+  if [ "$(id -u)" -ne 0 ]; then
+    echo -e "${YELLOW}警告: 需要root权限才能进行系统优化${RESET}"
+    return 1
+  fi
+  
+  # 1. 调整系统文件描述符限制
+  if [ -f /etc/security/limits.conf ]; then
+    if ! grep -q "* soft nofile 51200" /etc/security/limits.conf; then
+      echo "* soft nofile 51200" >> /etc/security/limits.conf
+      echo "* hard nofile 51200" >> /etc/security/limits.conf
+    fi
+  fi
+  
+  # 2. 调整内核参数
+  if [ -f /etc/sysctl.conf ]; then
+    # 备份原始配置
+    cp /etc/sysctl.conf /etc/sysctl.conf.bak
+    
+    # 添加优化参数
+    cat >> /etc/sysctl.conf << EOF
+# SOCKS5代理性能优化
+fs.file-max = 51200
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.netdev_max_backlog = 250000
+net.core.somaxconn = 4096
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 1200
+net.ipv4.ip_local_port_range = 10000 65000
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_max_tw_buckets = 5000
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mem = 25600 51200 102400
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+net.ipv4.tcp_mtu_probing = 1
+EOF
+    
+    # 应用新的内核参数
+    sysctl -p
+  fi
+  
+  # 3. 根据内存大小调整优化策略
+  local mem_total=$(free -m | awk '/Mem:/ {print $2}' 2>/dev/null || echo "0")
+  if [[ "$mem_total" =~ ^[0-9]+$ ]]; then
+    if [ "$mem_total" -lt 128 ]; then
+      # 超低内存环境优化
+      echo -e "${YELLOW}检测到超低内存环境 (${mem_total}MB)，应用特殊优化...${RESET}"
+      # 禁用不必要的服务
+      for svc in rsyslog cron atd; do
+        if command -v systemctl >/dev/null 2>&1; then
+          systemctl stop $svc 2>/dev/null || true
+          systemctl disable $svc 2>/dev/null || true
+        elif command -v service >/dev/null 2>&1; then
+          service $svc stop 2>/dev/null || true
+        fi
+      done
+      
+      # 创建swap分区（如果不存在）
+      if ! swapon -s | grep -q "/swapfile"; then
+        echo "创建128MB swap分区以提高稳定性..."
+        dd if=/dev/zero of=/swapfile bs=1M count=128
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        echo "/swapfile none swap sw 0 0" >> /etc/fstab
+      fi
+    elif [ "$mem_total" -lt 256 ]; then
+      # 低内存环境优化
+      echo -e "${YELLOW}检测到低内存环境 (${mem_total}MB)，应用内存优化...${RESET}"
+      # 调整内存使用
+      if [ -f /etc/sysctl.conf ]; then
+        echo "vm.swappiness = 10" >> /etc/sysctl.conf
+        echo "vm.vfs_cache_pressure = 50" >> /etc/sysctl.conf
+        sysctl -p
+      fi
+    fi
+  fi
+  
+  echo -e "${GREEN}系统优化完成${RESET}"
+  return 0
 }
 
 check_environment() {
@@ -570,8 +678,7 @@ check_environment() {
   echo -e "${GREEN}系统环境检测${RESET}"
   echo -e "${GREEN}----------------------------------------${RESET}"
   
-  # 检测VPS类型
-  echo -n "VPS类型: "
+  # 检测VPS类型和配置
   detect_vps_type
   
   # 检测操作系统
@@ -592,7 +699,21 @@ check_environment() {
   # 检测公网IP
   echo "公网IP: $(get_best_ip)"
   
+  # 检测系统负载
+  local load=$(cat /proc/loadavg | awk '{print $1, $2, $3}' 2>/dev/null || echo "未知")
+  echo "系统负载: $load"
+  
+  # 检测网络连接状态
+  local connections=$(netstat -n | grep -c ESTABLISHED 2>/dev/null || echo "未知")
+  echo "当前连接数: $connections"
+  
   echo -e "${GREEN}========================================${RESET}"
+  
+  # 询问是否进行系统优化
+  prompt "是否进行系统性能优化？(Y/n)" "Y" OPTIMIZE
+  if [ "$OPTIMIZE" = "Y" ] || [ "$OPTIMIZE" = "y" ]; then
+    optimize_system
+  fi
 }
 
 install_flow() {
@@ -610,44 +731,74 @@ install_flow() {
     echo "已生成密码：${PASSWORD}"
   fi
 
+  # 检测VPS配置并获取推荐内核
+  echo "正在检测VPS配置以选择最适合的内核..."
+  detect_vps_type
+  
+  # 检查是否已有可用实现
   EXIST="$(detect_existing_impl || true)"
   if [ -n "${EXIST}" ]; then
     echo "检测到系统可用实现：${EXIST}（将尝试使用它）"
     BIN_TYPE="${EXIST}"
   else
-    echo "未检测到受支持的实现，尝试安装..."
+    echo "未检测到受支持的实现，将根据VPS配置安装最适合的内核..."
     
-    # 尝试安装各种实现
-    if try_install_3proxy; then
-      if command -v 3proxy >/dev/null 2>&1; then
-        BIN_TYPE="3proxy"
-        echo "已安装 3proxy"
+    # 根据VPS配置选择最适合的内核
+    if [ "${RECOMMENDED_KERNEL}" = "microsocks" ]; then
+      echo "VPS配置较低，优先安装资源占用最少的microsocks..."
+      if try_install_microsocks; then
+        if command -v microsocks >/dev/null 2>&1; then
+          BIN_TYPE="microsocks"
+          echo "已安装 microsocks"
+        fi
+      elif try_install_3proxy; then
+        if command -v 3proxy >/dev/null 2>&1; then
+          BIN_TYPE="3proxy"
+          echo "microsocks安装失败，已安装备选的3proxy"
+        fi
       fi
-    elif try_install_microsocks; then
-      if command -v microsocks >/dev/null 2>&1; then
-        BIN_TYPE="microsocks"
-        echo "已安装 microsocks"
+    elif [ "${RECOMMENDED_KERNEL}" = "3proxy" ]; then
+      echo "VPS配置适中，优先安装轻量级的3proxy..."
+      if try_install_3proxy; then
+        if command -v 3proxy >/dev/null 2>&1; then
+          BIN_TYPE="3proxy"
+          echo "已安装 3proxy"
+        fi
+      elif try_install_microsocks; then
+        if command -v microsocks >/dev/null 2>&1; then
+          BIN_TYPE="microsocks"
+          echo "3proxy安装失败，已安装备选的microsocks"
+        fi
       fi
-    elif try_install_ss5; then
-      if command -v ss5 >/dev/null 2>&1; then
-        BIN_TYPE="ss5"
-        echo "已安装 ss5"
-      fi
-    elif try_install_danted; then
-      if command -v sockd >/dev/null 2>&1 || command -v danted >/dev/null 2>&1; then
-        BIN_TYPE="danted"
-        echo "已安装 dante-server"
+    else
+      echo "VPS配置良好，优先安装功能完善的ss5..."
+      if try_install_ss5; then
+        if command -v ss5 >/dev/null 2>&1; then
+          BIN_TYPE="ss5"
+          echo "已安装 ss5"
+        fi
+      elif try_install_3proxy; then
+        if command -v 3proxy >/dev/null 2>&1; then
+          BIN_TYPE="3proxy"
+          echo "ss5安装失败，已安装备选的3proxy"
+        fi
+      elif try_install_microsocks; then
+        if command -v microsocks >/dev/null 2>&1; then
+          BIN_TYPE="microsocks"
+          echo "ss5和3proxy安装失败，已安装备选的microsocks"
+        fi
       fi
     fi
   fi
 
+  # 如果所有尝试都失败，使用singbox作为备用
   if [ -z "${BIN_TYPE}" ]; then
     echo "尝试下载备用的sing-box作为SOCKS5实现..."
     if download_singbox; then
       BIN_TYPE="singbox"
       echo "使用下载的备用 sing-box（已保存到 ${SINGBOX_BIN}）"
     else
-      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 microsocks/3proxy/danted，或检查网络。${RESET}"
+      echo -e "${RED}未能安装或下载任何 socks5 实现。请手动安装 microsocks/3proxy/ss5，或检查网络。${RESET}"
       return 1
     fi
   fi
@@ -741,15 +892,17 @@ main_menu() {
     echo "3) 卸载 socks5"
     echo "4) 状态"
     echo "5) 检测环境"
-    echo "6) 退出"
-    read -r -p "请选择 (1-6): " opt < /dev/tty || opt="6"
+    echo "6) 系统优化"
+    echo "7) 退出"
+    read -r -p "请选择 (1-7): " opt < /dev/tty || opt="7"
     case "${opt}" in
       1) install_flow ;;
       2) modify_flow ;;
       3) uninstall_flow ;;
       4) status_flow ;;
       5) check_environment ;;
-      6) echo "退出。"; exit 0 ;;
+      6) optimize_system ;;
+      7) echo "退出。"; exit 0 ;;
       *) echo "无效选项。" ;;
     esac
   done
