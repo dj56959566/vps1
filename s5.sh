@@ -62,8 +62,7 @@ install() {
     
     read -p "SOCKS5端口 [1080]: " socks_port
     socks_port=${socks_port:-1080}
-    read -p "HTTP代理端口 [3128]: " http_port
-    http_port=${http_port:-3128}
+    http_port=3128
     
     # 安装依赖
     echo -e "${BLUE}[1/3]${NC} 安装编译依赖..."
@@ -146,13 +145,8 @@ EOF
     echo -e "${WHITE}SOCKS5 连接:${NC}"
     echo -e "  • ${YELLOW}socks://${user}:${pass}@${ip}:${socks_port}${NC}"
     echo
-    echo -e "${WHITE}HTTP 连接:${NC}"
-    echo -e "  • ${YELLOW}http://${ip}:${http_port}${NC}"
-    echo
     echo -e "${WHITE}Telegram 快链:${NC}"
     echo -e "  • ${BLUE}https://t.me/socks?server=${ip}&port=${socks_port}&user=${user}&pass=${pass}${NC}"
-    echo
-    echo -e "${GREEN}By:Djkyc - 3proxy内核版${NC}"
     echo
 }
 
@@ -166,7 +160,7 @@ uninstall() {
     rm -rf /usr/local/etc/3proxy
     rm -rf /var/log/3proxy
     systemctl daemon-reload
-    echo -e "${GREEN}卸载完成 - By:Djkyc${NC}"
+    echo -e "${GREEN}卸载完成${NC}"
 }
 
 # 修改配置
@@ -189,7 +183,6 @@ modify_config() {
     
     echo -e "${WHITE}当前用户:${NC} ${GREEN}$current_user${NC}"
     echo -e "${WHITE}SOCKS5端口:${NC} ${GREEN}$socks_port${NC}"
-    echo -e "${WHITE}HTTP端口:${NC} ${GREEN}$http_port${NC}"
     echo
     
     echo -e "${CYAN}=== 修改配置 ===${NC}"
@@ -201,8 +194,7 @@ modify_config() {
     read -p "新SOCKS5端口 [$socks_port]: " new_socks_port
     new_socks_port=${new_socks_port:-$socks_port}
     
-    read -p "新HTTP端口 [$http_port]: " new_http_port
-    new_http_port=${new_http_port:-$http_port}
+    new_http_port=3128
     
     # 如果密码为空，保持原密码
     if [[ -z "$new_pass" ]]; then
@@ -265,15 +257,11 @@ EOF
             echo -e "  • ${YELLOW}socks://${new_user}:[原密码]@${ip}:${new_socks_port}${NC}"
         fi
         echo
-        echo -e "${WHITE}HTTP 连接:${NC}"
-        echo -e "  • ${YELLOW}http://${ip}:${new_http_port}${NC}"
-        echo
         if [[ -n "$new_pass" ]]; then
             echo -e "${WHITE}Telegram 快链:${NC}"
             echo -e "  • ${BLUE}https://t.me/socks?server=${ip}&port=${new_socks_port}&user=${new_user}&pass=${new_pass}${NC}"
             echo
         fi
-        echo -e "${GREEN}By:Djkyc - 3proxy内核版${NC}"
     else
         echo -e "${RED}✗ 服务启动失败，请检查配置${NC}"
     fi
