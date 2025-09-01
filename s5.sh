@@ -233,7 +233,6 @@ nserver 8.8.8.8
 nserver 8.8.4.4
 nscache 65536
 timeouts 1 5 30 60 180 1800 15 60
-daemon
 log /var/log/3proxy/3proxy.log D
 logformat "- +_L%t.%. %N.%p %E %U %C:%c %R:%r %O %I %h %T"
 rotate 30
@@ -256,8 +255,10 @@ Description=3proxy Proxy Server - By:Djkyc
 After=network.target
 
 [Service]
-Type=simple
+Type=forking
 ExecStart=/usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg
+ExecReload=/bin/kill -HUP \$MAINPID
+PIDFile=/var/run/3proxy.pid
 Restart=on-failure
 RestartSec=5
 User=root
@@ -271,19 +272,54 @@ EOF
     systemctl daemon-reload
     systemctl enable 3proxy >/dev/null 2>&1
     
-    if ! systemctl start 3proxy; then
-        echo -e "${RED}错误: 3proxy服务启动失败${NC}"
-        echo "检查配置文件..."
-        journalctl -u 3proxy --no-pager -n 10
-        exit 1
+    # 测试配置文件
+    echo "测试3proxy配置..."
+    if ! /usr/local/bin/3proxy -t /usr/local/etc/3proxy/3proxy.cfg >/dev/null 2>&1; then
+        echo -e "${RED}错误: 3proxy配置文件有误${NC}"
+        echo "尝试修复配置..."
+        
+        # 使用简化配置
+        cat > /usr/local/etc/3proxy/3proxy.cfg << EOF
+nserver 8.8.8.8
+nscache 65536
+timeouts 1 5 30 60 180 1800 15 60
+log /var/log/3proxy/3proxy.log D
+rotate 30
+users $user:CL:$hash
+auth strong
+allow $user
+deny *
+socks -p$socks_port
+proxy -p$http_port
+EOF
     fi
     
-    sleep 2
-    
-    # 验证服务状态
-    if ! systemctl is-active 3proxy >/dev/null 2>&1; then
-        echo -e "${RED}错误: 3proxy服务未正常运行${NC}"
-        exit 1
+    # 启动服务
+    if ! systemctl start 3proxy; then
+        echo -e "${YELLOW}systemctl启动失败，尝试直接启动...${NC}"
+        # 直接启动3proxy
+        /usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg &
+        sleep 3
+        
+        # 检查进程是否运行
+        if pgrep -f "3proxy" >/dev/null; then
+            echo -e "${GREEN}✓ 3proxy已启动${NC}"
+        else
+            echo -e "${RED}错误: 3proxy启动失败${NC}"
+            echo "检查日志:"
+            tail -10 /var/log/3proxy/3proxy.log 2>/dev/null || echo "无日志文件"
+            exit 1
+        fi
+    else
+        sleep 2
+        # 验证服务状态
+        if ! systemctl is-active 3proxy >/dev/null 2>&1; then
+            echo -e "${YELLOW}systemctl状态异常，检查进程...${NC}"
+            if ! pgrep -f "3proxy" >/dev/null; then
+                echo -e "${RED}错误: 3proxy服务未正常运行${NC}"
+                exit 1
+            fi
+        fi
     fi
     
     # 获取IP并输出连接信息
@@ -363,34 +399,54 @@ modify_config() {
     
     # 更新配置文件
     cat > /usr/local/etc/3proxy/3proxy.cfg << EOF
-# 3proxy配置 - By:Djkyc
 nserver 8.8.8.8
-nserver 8.8.4.4
 nscache 65536
 timeouts 1 5 30 60 180 1800 15 60
-daemon
 log /var/log/3proxy/3proxy.log D
-logformat "- +_L%t.%. %N.%p %E %U %C:%c %R:%r %O %I %h %T"
 rotate 30
-
-# 用户认证
 users $new_user:CL:$new_hash
 auth strong
 allow $new_user
 deny *
-
-# 代理服务
 socks -p$new_socks_port
 proxy -p$new_http_port
 EOF
     
     # 重启服务
     echo -e "${BLUE}重启3proxy服务...${NC}"
-    systemctl restart 3proxy
-    sleep 2
     
-    if systemctl is-active 3proxy >/dev/null 2>&1; then
-        echo -e "${GREEN}✓ 配置更新成功${NC}"
+    # 停止现有进程
+    systemctl stop 3proxy 2>/dev/null || true
+    pkill -f "3proxy" 2>/dev/null || true
+    sleep 1
+    
+    # 启动服务
+    if systemctl start 3proxy 2>/dev/null; then
+        sleep 2
+        if systemctl is-active 3proxy >/dev/null 2>&1 || pgrep -f "3proxy" >/dev/null; then
+            echo -e "${GREEN}✓ 配置更新成功${NC}"
+        else
+            echo -e "${YELLOW}systemctl异常，尝试直接启动...${NC}"
+            /usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg &
+            sleep 2
+            if pgrep -f "3proxy" >/dev/null; then
+                echo -e "${GREEN}✓ 配置更新成功${NC}"
+            else
+                echo -e "${RED}✗ 服务启动失败${NC}"
+                return
+            fi
+        fi
+    else
+        echo -e "${YELLOW}systemctl启动失败，尝试直接启动...${NC}"
+        /usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg &
+        sleep 2
+        if pgrep -f "3proxy" >/dev/null; then
+            echo -e "${GREEN}✓ 配置更新成功${NC}"
+        else
+            echo -e "${RED}✗ 服务启动失败${NC}"
+            return
+        fi
+    fi
         
         # 显示新的连接信息
         ip=$(get_ip)
