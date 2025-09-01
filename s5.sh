@@ -583,6 +583,202 @@ check_status() {
     read -p "按回车键继续..."
 }
 
+# 深度连接测试
+deep_test() {
+    show_banner
+    echo -e "${YELLOW}深度连接测试和修复${NC}"
+    echo
+    
+    # 检查当前配置
+    if [[ ! -f /usr/local/etc/3proxy/3proxy.cfg ]]; then
+        echo -e "${RED}错误: 3proxy未安装${NC}"
+        read -p "按回车键继续..."
+        return
+    fi
+    
+    socks_port=$(grep "socks -p" /usr/local/etc/3proxy/3proxy.cfg | sed 's/socks -p//' | sed 's/socks -i[^ ]* -p//')
+    current_user=$(head -1 /usr/local/etc/3proxy/passwd 2>/dev/null | cut -d: -f1)
+    current_pass=$(head -1 /usr/local/etc/3proxy/passwd 2>/dev/null | cut -d: -f2)
+    
+    echo -e "${CYAN}=== 深度网络诊断 ===${NC}"
+    
+    # 1. 检查系统网络配置
+    echo -e "${BLUE}1. 检查系统网络配置...${NC}"
+    echo -e "${YELLOW}网络接口信息:${NC}"
+    ip addr show | grep -E "inet |UP|DOWN" | head -10
+    echo
+    
+    # 2. 检查路由表
+    echo -e "${BLUE}2. 检查路由表...${NC}"
+    ip route | head -5
+    echo
+    
+    # 3. 检查DNS解析
+    echo -e "${BLUE}3. 检查DNS解析...${NC}"
+    if nslookup telegram.org >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ DNS解析正常${NC}"
+    else
+        echo -e "${RED}✗ DNS解析异常${NC}"
+        echo "尝试修复DNS..."
+        echo "nameserver 8.8.8.8" > /etc/resolv.conf
+        echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+    fi
+    
+    # 4. 测试SOCKS5连接
+    echo -e "${BLUE}4. 测试SOCKS5连接...${NC}"
+    
+    # 安装测试工具
+    if ! command -v curl >/dev/null; then
+        echo "安装curl..."
+        apt-get update -qq && apt-get install -y -qq curl 2>/dev/null || true
+    fi
+    
+    # 测试本地SOCKS5连接
+    echo "测试本地SOCKS5连接..."
+    if curl -s --socks5 127.0.0.1:$socks_port --socks5-basic --user "$current_user:$current_pass" --max-time 10 http://httpbin.org/ip >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 本地SOCKS5连接正常${NC}"
+    else
+        echo -e "${RED}✗ 本地SOCKS5连接失败${NC}"
+        echo "尝试修复..."
+        
+        # 重新创建无认证配置进行测试
+        echo -e "${YELLOW}创建测试配置...${NC}"
+        pkill -f "3proxy" 2>/dev/null || true
+        
+        cat > /tmp/test_3proxy.cfg << EOF
+nserver 8.8.8.8
+nscache 65536
+timeouts 1 5 30 60 180 1800 15 60
+log /var/log/3proxy/test.log D
+socks -i0.0.0.0 -p$socks_port
+EOF
+        
+        # 启动测试配置
+        cd /tmp
+        /usr/local/bin/3proxy test_3proxy.cfg &
+        sleep 3
+        
+        # 测试无认证连接
+        if curl -s --socks5 127.0.0.1:$socks_port --max-time 10 http://httpbin.org/ip >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ 无认证SOCKS5连接正常${NC}"
+            echo -e "${YELLOW}问题可能在认证配置${NC}"
+        else
+            echo -e "${RED}✗ 基础SOCKS5连接失败${NC}"
+        fi
+        
+        pkill -f "test_3proxy" 2>/dev/null || true
+        rm -f /tmp/test_3proxy.cfg
+    fi
+    
+    # 5. 检查TG相关端口
+    echo -e "${BLUE}5. 检查Telegram连接...${NC}"
+    
+    # 测试TG服务器连接
+    tg_servers=("149.154.167.50" "149.154.175.53" "91.108.56.130")
+    for server in "${tg_servers[@]}"; do
+        echo "测试连接到TG服务器 $server:443..."
+        if timeout 5 bash -c "</dev/tcp/$server/443" 2>/dev/null; then
+            echo -e "${GREEN}✓ 可以连接到 $server${NC}"
+        else
+            echo -e "${RED}✗ 无法连接到 $server${NC}"
+        fi
+    done
+    
+    # 6. 创建最兼容的配置
+    echo -e "${BLUE}6. 创建最兼容配置...${NC}"
+    
+    # 停止现有服务
+    systemctl stop 3proxy 2>/dev/null || true
+    pkill -f "3proxy" 2>/dev/null || true
+    sleep 2
+    
+    # 创建最简单最兼容的配置
+    cat > /usr/local/etc/3proxy/3proxy.cfg << EOF
+# 3proxy最兼容配置 - 专为LXC/TG优化
+nserver 8.8.8.8
+nserver 1.1.1.1
+nserver 208.67.222.222
+nscache 65536
+timeouts 1 5 30 60 180 1800 15 60
+log /var/log/3proxy/3proxy.log D
+rotate 30
+
+# 最大兼容性设置
+maxconn 2000
+stacksize 131072
+
+# 简化认证 - 使用密码文件
+users $/usr/local/etc/3proxy/passwd
+auth strong
+allow $current_user
+deny *
+
+# SOCKS5 - 监听所有接口，最大兼容性
+socks -i0.0.0.0 -e0.0.0.0 -p$socks_port
+EOF
+    
+    echo -e "${GREEN}✓ 已创建最兼容配置${NC}"
+    
+    # 7. 重启并测试
+    echo -e "${BLUE}7. 重启服务并测试...${NC}"
+    
+    cd /usr/local/etc/3proxy
+    /usr/local/bin/3proxy 3proxy.cfg &
+    sleep 3
+    
+    if pgrep -f "3proxy" >/dev/null; then
+        echo -e "${GREEN}✓ 3proxy启动成功${NC}"
+        
+        # 显示监听状态
+        echo -e "${CYAN}当前监听状态:${NC}"
+        ss -tlnp | grep ":$socks_port" || netstat -tlnp | grep ":$socks_port"
+        
+        # 获取所有IP地址
+        echo -e "${BLUE}8. 获取所有可用IP地址...${NC}"
+        
+        # 公网IP
+        public_ip=$(curl -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || curl -s --max-time 5 api.ipify.org 2>/dev/null)
+        
+        # 内网IP
+        local_ips=($(hostname -I 2>/dev/null))
+        
+        echo
+        echo -e "${CYAN}=== 多种连接方式测试 ===${NC}"
+        
+        if [[ -n "$public_ip" ]]; then
+            echo -e "${WHITE}公网IP连接:${NC}"
+            echo -e "  • ${YELLOW}socks://${current_user}:${current_pass}@${public_ip}:${socks_port}${NC}"
+            echo -e "  • ${BLUE}https://t.me/socks?server=${public_ip}&port=${socks_port}&user=${current_user}&pass=${current_pass}${NC}"
+            echo
+        fi
+        
+        echo -e "${WHITE}内网IP连接 (如果在同一网络):${NC}"
+        for local_ip in "${local_ips[@]}"; do
+            if [[ "$local_ip" != "127.0.0.1" ]]; then
+                echo -e "  • ${YELLOW}socks://${current_user}:${current_pass}@${local_ip}:${socks_port}${NC}"
+            fi
+        done
+        echo
+        
+        echo -e "${YELLOW}TG连接故障排除建议:${NC}"
+        echo "1. 首先尝试公网IP连接"
+        echo "2. 确认VPS提供商未封锁代理端口"
+        echo "3. 检查客户端是否支持SOCKS5认证"
+        echo "4. 尝试更换端口 (避开常见代理端口)"
+        echo "5. 联系VPS提供商确认网络策略"
+        echo
+        echo -e "${RED}如果仍无法连接，可能是VPS网络限制导致${NC}"
+        
+    else
+        echo -e "${RED}✗ 3proxy启动失败${NC}"
+        echo "检查错误日志:"
+        tail -20 /var/log/3proxy/3proxy.log 2>/dev/null || echo "无日志文件"
+    fi
+    
+    echo
+    read -p "按回车键继续..."
+}
+
 # 主菜单
 main() {
     show_banner
@@ -591,11 +787,12 @@ main() {
     echo -e "${WHITE}3.修改并自定义${NC}"
     echo -e "${WHITE}4.查看状态${NC}"
     echo -e "${WHITE}5.网络修复${NC}"
-    echo -e "${WHITE}6.退出${NC}"
+    echo -e "${WHITE}6.深度测试${NC}"
+    echo -e "${WHITE}7.退出${NC}"
     echo
     echo -e "${GREEN}By:Djkyc${NC}"
     echo
-    read -p "选择 [1-6]: " choice
+    read -p "选择 [1-7]: " choice
     
     case $choice in
         1) install ;;
@@ -603,7 +800,8 @@ main() {
         3) modify_config ;;
         4) check_status ;;
         5) network_fix ;;
-        6) exit 0 ;;
+        6) deep_test ;;
+        7) exit 0 ;;
         *) echo "无效选择" ;;
     esac
 }
